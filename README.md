@@ -10,6 +10,7 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 
 | 版本 | 文件 | 适用 |
 |---|---|---|
+| v0.0.2 | `LaunchPad-0.0.2-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.1 | `LaunchPad-0.0.1-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 
 下载解压后把 `LaunchPad.app` 拖进 `/Applications` 即可。当前是 **ad-hoc 签名、未做 Apple 公证**，首次打开若被 Gatekeeper 拦截，用「右键 → 打开」放行（公证需要 Apple 开发者账号）。
