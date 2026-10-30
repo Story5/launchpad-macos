@@ -88,12 +88,16 @@ final class IconStore: @unchecked Sendable {
     private static func generate(_ request: IconRequest) -> CGImage? {
         switch request.kind {
         case .app(let path):
-            guard let url = iconFileURL(bundleURL: URL(fileURLWithPath: path)) else { return nil }
-            return conformToSystemShape(downscale(imageSourceAt: url, pixelSize: request.pixelSize))
+            guard let url = iconFileURL(bundleURL: URL(fileURLWithPath: path)),
+                  let image = downscale(imageSourceAt: url, pixelSize: request.pixelSize),
+                  !Self.isFullyTransparent(image) else { return nil }
+            return conformToSystemShape(image)
         case .folder(let childPaths):
             let children = childPaths.prefix(9).compactMap { path -> CGImage? in
-                guard let url = iconFileURL(bundleURL: URL(fileURLWithPath: path)) else { return nil }
-                return conformToSystemShape(downscale(imageSourceAt: url, pixelSize: 64))
+                guard let url = iconFileURL(bundleURL: URL(fileURLWithPath: path)),
+                      let image = downscale(imageSourceAt: url, pixelSize: 64),
+                      !Self.isFullyTransparent(image) else { return nil }
+                return conformToSystemShape(image)
             }
             return synthesizeFolderIcon(children: children, pixelSize: request.pixelSize)
         case .unknown:
@@ -170,8 +174,28 @@ final class IconStore: @unchecked Sendable {
     }
 
     static func rasterize(_ image: NSImage, pixelSize: Int) -> CGImage? {
-        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        return rasterize(cg, pixelSize: pixelSize)
+        let size = max(8, pixelSize)
+        // NSWorkspace 给的 NSImage 内部带着 1024px 的多分辨率 rep，
+        // 但 cgImage(forProposedRect:) 默认只挑 64px 的那张 —— 直接拿来用会糊。
+        // 只有当它已经足够大时才走直通路径，否则必须显式按目标尺寸重绘一次。
+        if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), cg.width >= size {
+            return rasterize(cg, pixelSize: pixelSize)
+        }
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil,
+                                  width: size,
+                                  height: size,
+                                  bitsPerComponent: 8,
+                                  bytesPerRow: 0,
+                                  space: colorSpace,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        ctx.interpolationQuality = .high
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        image.draw(in: CGRect(x: 0, y: 0, width: size, height: size))
+        NSGraphicsContext.restoreGraphicsState()
+        return ctx.makeImage()
     }
 
     // MARK: - 图标形状归一（对齐 macOS 官方图标模板）
@@ -210,8 +234,9 @@ final class IconStore: @unchecked Sendable {
         return ctx.makeImage() ?? image
     }
 
-    /// 四角是否不透明：不透明说明它没有苹果图标那样的圆角轮廓，需要补形状
-    private static func isFullBleedSquare(_ image: CGImage) -> Bool {
+    /// 把整张图缩到 40×40 采样一次，同时量出「整图最大 alpha」和「四角平均 alpha」。
+    /// 一次采样喂给下面两个判定，避免重复解码。
+    private static func alphaProfile(_ image: CGImage) -> (max: Int, corner: CGFloat)? {
         let s = 40
         var buf = [UInt8](repeating: 0, count: s * s * 4)
         guard let ctx = CGContext(data: &buf,
@@ -220,19 +245,33 @@ final class IconStore: @unchecked Sendable {
                                   bytesPerRow: s * 4,
                                   space: CGColorSpaceCreateDeviceRGB(),
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return false }
+        else { return nil }
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: s, height: s))
-        var sum = 0
-        for y in 0..<3 {
-            for x in 0..<3 {
-                // 四个角各取 3×3
-                sum += Int(buf[(y * s + x) * 4 + 3])
-                sum += Int(buf[(y * s + (s - 1 - x)) * 4 + 3])
-                sum += Int(buf[((s - 1 - y) * s + x) * 4 + 3])
-                sum += Int(buf[((s - 1 - y) * s + (s - 1 - x)) * 4 + 3])
+        var maxAlpha = 0
+        var corner = 0
+        for y in 0..<s {
+            for x in 0..<s {
+                let a = Int(buf[(y * s + x) * 4 + 3])
+                if a > maxAlpha { maxAlpha = a }
+                if x < 3 && y < 3 { corner += a }
             }
         }
-        return Double(sum) / 36.0 / 255.0 > 0.5
+        return (maxAlpha, CGFloat(corner) / 9.0 / 255.0)
+    }
+
+    /// 四角是否不透明：不透明说明它没有苹果图标那样的圆角轮廓，需要补形状
+    private static func isFullBleedSquare(_ image: CGImage) -> Bool {
+        guard let p = alphaProfile(image) else { return false }
+        return p.corner > 0.5
+    }
+
+    /// 整张图是否完全透明。
+    /// 少数 App（Books 就是）的 AppIcon.icns 只是个空壳：文件在、尺寸对，
+    /// 但每一个像素的 alpha 都是 0 —— Apple 把真图标放进了 Assets.car。
+    /// 这种情况必须放弃 icns，交给 NSWorkspace 兜底取系统合成好的图标。
+    private static func isFullyTransparent(_ image: CGImage) -> Bool {
+        guard let p = alphaProfile(image) else { return false }
+        return p.max < 8
     }
 
     /// 合成文件夹图标：圆角底板 + 3×3 迷你应用图标（对齐原生 LaunchPad 的文件夹样式）
@@ -285,8 +324,8 @@ final class IconStore: @unchecked Sendable {
     // MARK: - 磁盘缓存
 
     private func cacheKey(_ request: IconRequest) -> String {
-        // 后缀 -s2：图标形状归一上线后，旧的磁盘缓存必须作废重生成
-        "\(stableHash(request.key))-\(request.pixelSize)-s2"
+        // 后缀 -s3：空壳 icns 检测上线后，旧的磁盘缓存（存着全透明的废图）必须作废重生成
+        "\(stableHash(request.key))-\(request.pixelSize)-s3"
     }
 
     private func diskURL(key: String) -> URL {

@@ -219,7 +219,8 @@ final class GridCanvasView: NSView {
         }
     }
 
-    private func loadIcon(for item: LaunchItem, into layer: IconLayer) {
+    /// trackInGrid=false 用于「拖拽副本」这类不在 iconLayers 里的临时图层
+    private func loadIcon(for item: LaunchItem, into layer: IconLayer, trackInGrid: Bool = true) {
         let pixel = Int(metrics.imageSize * contentsScale)
         let request: IconRequest
         if item.isFolder {
@@ -233,8 +234,10 @@ final class GridCanvasView: NSView {
         }
         let targetID = ObjectIdentifier(item)
         IconStore.shared.fetch(request) { [weak self, weak layer] image in
-            guard let self, let layer, layer.item?.id == item.id,
-                  self.iconLayers[targetID] === layer else { return }
+            guard let self, let layer else { return }
+            if trackInGrid {
+                guard layer.item?.id == item.id, self.iconLayers[targetID] === layer else { return }
+            }
             layer.applyIcon(image)
         }
     }
@@ -259,6 +262,12 @@ final class GridCanvasView: NSView {
         let yTop = origin.y + CGFloat(row) * metrics.cellHeight
         let y = viewSize.height - yTop - metrics.cellHeight
         return CGRect(x: x, y: y, width: metrics.cellWidth, height: metrics.cellHeight)
+    }
+
+    /// scrollLayer 内容坐标 → 视图（overlayLayer）坐标。
+    /// 内容坐标里带着 page × pageSize 的横向偏移，凡是要和指针/overlay 打交道的地方都必须先换算。
+    private func toViewSpace(_ frame: CGRect) -> CGRect {
+        overlayLayer.convert(frame, from: scrollLayer)
     }
 
     private func position(_ layer: IconLayer, page: Int, slot: Int, animate: Bool) {
@@ -556,10 +565,16 @@ final class GridCanvasView: NSView {
                        imageSize: metrics.imageSize,
                        contentsScale: contentsScale)
         drag.applyIcon(layer.currentIcon())
-        drag.frame = layer.frame
+        // layer.frame 是 scrollLayer 的「内容坐标」（含 page × pageSize 的偏移），
+        // 而拖拽副本挂在 overlayLayer（视图坐标、不随滚动移动）上。
+        // 不换算的话第 2 页起副本会被放到屏幕外 —— 表现就是「按住一拖，图标消失了」。
+        let startFrame = toViewSpace(layer.frame)
+        drag.frame = startFrame
         overlayLayer.addSublayer(drag)
         dragLayer = drag
-        dragGrabOffset = CGPoint(x: point.x - layer.frame.midX, y: point.y - layer.frame.midY)
+        dragGrabOffset = CGPoint(x: point.x - startFrame.midX, y: point.y - startFrame.midY)
+        // 首屏图标是后台解码的，万一还没解码完，副本也得跟着补一次，不能拖出个空图标
+        if drag.currentIcon() == nil { loadIcon(for: item, into: drag, trackInGrid: false) }
 
         // 原位置隐藏，并从布局里移除（留出空位）
         if let loc = location(of: item) {
@@ -746,8 +761,8 @@ final class GridCanvasView: NSView {
             let slot = min(destination.slot, displayPages[destination.page].count)
             displayPages[destination.page].insert(item, at: slot)
             library?.moveItem(item, toPage: destination.page, slot: slot)
-            // 落位：把拖拽层弹回目标格子
-            let frame = frameForItem(page: destination.page, slot: slot)
+            // 落位：把拖拽层弹回目标格子（同样要换算到 overlayLayer 的视图坐标）
+            let frame = toViewSpace(frameForItem(page: destination.page, slot: slot))
             let target = CGPoint(x: frame.midX, y: frame.midY)
             CATransaction.begin()
             CATransaction.setCompletionBlock { [weak self] in
@@ -976,8 +991,6 @@ final class GridCanvasView: NSView {
 
     func frameInWindow(for item: LaunchItem) -> CGRect? {
         guard let layer = iconLayers[ObjectIdentifier(item)] else { return nil }
-        var frame = layer.frame
-        frame.origin.x -= scrollSpring.value
-        return convert(frame, to: nil)
+        return convert(toViewSpace(layer.frame), to: nil)
     }
 }
