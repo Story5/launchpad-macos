@@ -35,6 +35,12 @@ final class GridCanvasView: NSView {
     private var lastWheelTime: TimeInterval = 0
     private var wheelVelocity: CGFloat = 0
 
+    // 整页翻页手势状态：一次双指手势最多走一页，且必定停在整页边界上
+    private var pagingActive = false
+    private var pagingStartPage = 0
+    private var pagingAccum: CGFloat = 0
+    private var pagingSnapWork: DispatchWorkItem?
+
     private var pageSize: CGFloat { max(1, viewSize.width) }
     private var maxOffset: CGFloat { CGFloat(max(0, displayPages.count - 1)) * pageSize }
 
@@ -59,6 +65,9 @@ final class GridCanvasView: NSView {
     override var isFlipped: Bool { false }
     override var acceptsFirstResponder: Bool { false }
 
+    /// 调试用：LP_TRACE_PAGE=1 时打印翻页轨迹（目标页 / 落位后的 offset 是否整页）
+    private static let tracePaging = ProcessInfo.processInfo.environment["LP_TRACE_PAGE"] == "1"
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -80,6 +89,7 @@ final class GridCanvasView: NSView {
 
     func setDisplayPages(_ pages: [[LaunchItem]], animated: Bool) {
         displayPages = pages.isEmpty ? [[]] : pages
+        resetPagingGesture()
         currentPage = min(currentPage, max(0, displayPages.count - 1))
         let target = CGFloat(currentPage) * pageSize
         scrollSpring.jump(to: target)
@@ -309,6 +319,11 @@ final class GridCanvasView: NSView {
         if settled {
             driver.stop()
             syncLayers(animate: false)
+            if Self.tracePaging {
+                let page = scrollSpring.value / pageSize
+                print(String(format: "[LP] settled: offset=%.1f page=%.3f %@",
+                             scrollSpring.value, page, abs(page - page.rounded()) < 0.001 ? "(整页)" : "(!! 非整页)"))
+            }
         }
     }
 
@@ -336,6 +351,23 @@ final class GridCanvasView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         guard !isDragging, displayPages.count > 1 else { return }
+
+        // 惯性事件：原生 Launchpad 不做惯性翻页，忽略位移；
+        // 但 .ended 仍要用来收尾，保证一定吸附回整页。
+        if event.momentumPhase == .ended {
+            finishPagingGesture()
+            return
+        }
+        if event.momentumPhase != [] { return }
+
+        // 手指离开 → 收尾翻页。必须放在 delta 守卫之前：
+        // 结束那一下的 scrollingDeltaX 通常是 0，若先判 delta 会直接 return，
+        // 吸附永远不执行，内容就停在半页位置（正是之前的 bug）。
+        if event.phase == .ended || event.phase == .cancelled {
+            finishPagingGesture()
+            return
+        }
+
         // AppKit 的 scrollingDeltaX 表示「手指移动方向」（已包含系统「自然滚动」偏好）：
         // 双指向左滑 → deltaX < 0。原生 Launchpad 此时翻到下一页，
         // 而 offset 增大 = 内容左移 = 后面的页，所以这里取负号。
@@ -347,19 +379,75 @@ final class GridCanvasView: NSView {
         lastWheelTime = now
         wheelVelocity = dx / CGFloat(dt)
 
-        if event.phase == .ended || event.momentumPhase == .ended || event.phase == .cancelled {
-            let projected = scrollSpring.value + wheelVelocity * 0.22
-            let page = Int(round(projected / pageSize))
-            let clamped = max(0, min(displayPages.count - 1, page))
-            scrollToPage(clamped, animated: true, initialVelocity: wheelVelocity * 0.3)
-            wheelVelocity = 0
-            return
-        }
+        if !pagingActive { beginPagingGesture() }
+        pagingAccum += dx
+
+        // 跟手，但单次手势最多走一页（与原生一致：一滑 = 一页），超出的部分做橡皮筋
+        let base = CGFloat(pagingStartPage) * pageSize
+        let raw = base + pagingAccum
+        var target = raw
+        let oneBefore = base - pageSize
+        let oneAfter = base + pageSize
+        if target < oneBefore { target = oneBefore - Self.resistance(oneBefore - target) }
+        else if target > oneAfter { target = oneAfter + Self.resistance(target - oneAfter) }
 
         driver.stop()
-        scrollSpring.jump(to: rubberBand(scrollSpring.value + dx))
+        scrollSpring.jump(to: rubberBand(target))
         applyOffset()
         updateCurrentPageFromOffset()
+        schedulePagingSnapFallback()
+    }
+
+    // MARK: 整页翻页
+
+    private func beginPagingGesture() {
+        pagingActive = true
+        pagingAccum = 0
+        pagingStartPage = currentPage
+        driver.stop()
+    }
+
+    private func resetPagingGesture() {
+        pagingActive = false
+        pagingAccum = 0
+        wheelVelocity = 0
+        pagingSnapWork?.cancel()
+        pagingSnapWork = nil
+    }
+
+    /// 手势结束（或兜底超时）→ 判定翻到哪一页，并且只会是整页。
+    private func finishPagingGesture() {
+        pagingSnapWork?.cancel()
+        pagingSnapWork = nil
+        guard pagingActive else { return }
+        pagingActive = false
+
+        let velocity = wheelVelocity
+        let distance = pagingAccum
+        // 走够 15% 页宽就算一次翻页；没走够但甩得够快（>0.6 页宽/秒）也算
+        var delta = 0
+        if distance > pageSize * 0.15 { delta = 1 }
+        else if distance < -pageSize * 0.15 { delta = -1 }
+        else if velocity > pageSize * 0.6 { delta = 1 }
+        else if velocity < -pageSize * 0.6 { delta = -1 }
+
+        pagingAccum = 0
+        wheelVelocity = 0
+        let target = max(0, min(displayPages.count - 1, pagingStartPage + delta))
+        if Self.tracePaging {
+            print(String(format: "[LP] paging end: from=%d -> %d (dist=%.0f vel=%.0f)",
+                         pagingStartPage, target, distance, velocity))
+        }
+        scrollToPage(target, animated: true, initialVelocity: velocity * 0.3)
+    }
+
+    /// 兜底：万一收不到手势结束事件（部分鼠标/驱动不传），空闲 0.14s 后强制吸附回整页，
+    /// 保证任何情况下都不会停在半页。
+    private func schedulePagingSnapFallback() {
+        pagingSnapWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.finishPagingGesture() }
+        pagingSnapWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14, execute: work)
     }
 
     // MARK: - 命中测试
