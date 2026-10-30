@@ -69,7 +69,10 @@ enum LPAnimation {
         if let from { a.fromValue = from }
         a.toValue = to
         a.beginTime = begin > 0 ? CACurrentMediaTime() + begin * scale : 0
-        a.isRemovedOnCompletion = false
+        // 动画结束后必须移除。若用 isRemovedOnCompletion = false 永久挂着，
+        // render server 会保留按起始 scale 栅格化的缓存再放大显示 → 整页发虚。
+        // 所有调用点都会在 add 之后把 model 值设成终值，所以移除后不会跳变。
+        a.isRemovedOnCompletion = true
         a.fillMode = .both
         return a
     }
@@ -86,7 +89,8 @@ enum LPAnimation {
         if let from { a.fromValue = NSValue(point: from) }
         a.toValue = NSValue(point: to)
         a.beginTime = begin > 0 ? CACurrentMediaTime() + begin * scale : 0
-        a.isRemovedOnCompletion = false
+        // 同 spring：结束后必须移除，否则动画永久挂在图层上。
+        a.isRemovedOnCompletion = true
         a.fillMode = .both
         return a
     }
@@ -102,7 +106,8 @@ enum LPAnimation {
         a.duration = duration * scale
         a.timingFunction = CAMediaTimingFunction(name: timing)
         a.beginTime = begin > 0 ? CACurrentMediaTime() + begin * scale : 0
-        a.isRemovedOnCompletion = false
+        // 同 spring：结束后必须移除，否则动画永久挂在图层上。
+        a.isRemovedOnCompletion = true
         a.fillMode = .both
         return a
     }

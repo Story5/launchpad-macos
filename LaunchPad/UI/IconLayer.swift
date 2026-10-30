@@ -16,6 +16,9 @@ final class IconLayer: CALayer {
 
     var iconPixelSize: CGFloat = 104
 
+    /// 是否正在抖动（外部只读）
+    var jiggling: Bool { isJiggling }
+
     override init() {
         super.init()
         commonInit()

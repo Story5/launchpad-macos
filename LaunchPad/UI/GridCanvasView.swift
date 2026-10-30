@@ -62,6 +62,8 @@ final class GridCanvasView: NSView {
     private var dwellPoint: NSPoint = .zero
     private var folderCandidate: LaunchItem?
     private var autoPageWorkItem: DispatchWorkItem?
+    /// 文件夹面板打开时网格会被压暗缩小，收尾动画要还原成这个值
+    private var folderModeActive = false
 
     // 键盘导航
     private var selection: (page: Int, slot: Int)?
@@ -553,6 +555,9 @@ final class GridCanvasView: NSView {
         // 原位置隐藏，并从布局里移除（留出空位）
         if let loc = location(of: item) {
             displayPages[loc.page].remove(at: loc.slot)
+            // 把空位钉在起始格子，并且整段拖拽都不再改它。
+            // 这样拖动过程中布局完全冻结，目标图标不会从指针底下跑掉。
+            gap = (loc.page, loc.slot)
         }
         layer.opacity = 0
 
@@ -562,6 +567,8 @@ final class GridCanvasView: NSView {
         for iconLayer in iconLayers.values where iconLayer !== layer {
             iconLayer.startJiggle()
         }
+        // 空位已钉住，重排一次把坐标对齐（位置本来就一致，不会有可见位移）
+        relayout(animated: false)
         moveDragLayer(to: point)
     }
 
@@ -580,32 +587,37 @@ final class GridCanvasView: NSView {
         // 边缘自动翻页
         scheduleAutoPageIfNeeded(at: point)
 
-        guard let hit = slotAt(point: point), hit.page < displayPages.count else { return }
-
-        // 几何格子 → 实际条目下标（要扣掉已打开的空位，否则会命中错位一格）
-        if let index = itemIndex(atPage: hit.page, slot: hit.slot) {
-            let candidate = displayPages[hit.page][index]
-            // sticky：已经锁定的目标用更宽松的判定范围，避免在格子边界反复横跳
-            if candidate !== item, isOver(point: point, page: hit.page, slot: hit.slot, sticky: hoverItem === candidate) {
-                if hoverItem !== candidate { setHover(candidate, at: point) }
-                // 压在图标上时冻结布局：不再开空位。
-                // 否则一靠近，空位动画就把目标图标推走，永远对不准（原来的"一直在动"）。
-                setGap(nil)
-                let now = ProcessInfo.processInfo.systemUptime
-                if now - dwellStart > 0.28, abs(dwellPoint.x - point.x) < 14, abs(dwellPoint.y - point.y) < 14 {
-                    folderCandidate = candidate
-                } else if abs(dwellPoint.x - point.x) >= 14 || abs(dwellPoint.y - point.y) >= 14 {
-                    dwellStart = now
-                    dwellPoint = point
-                }
-                return
-            }
+        guard let hit = slotAt(point: point), hit.page < displayPages.count else {
+            clearHover()
+            return
         }
 
-        clearHover()
-        dwellStart = ProcessInfo.processInfo.systemUptime
-        dwellPoint = point
-        setGap((page: hit.page, slot: insertionIndex(page: hit.page, slot: hit.slot)))
+        // 几何格子 → 实际显示在那里的条目（空位在拖拽期间是固定的，换算唯一且稳定）
+        guard let index = itemIndex(atPage: hit.page, slot: hit.slot) else {
+            clearHover()
+            dwellStart = ProcessInfo.processInfo.systemUptime
+            dwellPoint = point
+            return
+        }
+        let candidate = displayPages[hit.page][index]
+        let moved = hypot(point.x - downPoint.x, point.y - downPoint.y)
+        // 刚拿起时指针还在原格子上，先不参与分组，避免误合
+        guard moved > 22, candidate !== item,
+              isOverIcon(point: point, page: hit.page, slot: hit.slot, sticky: hoverItem === candidate) else {
+            clearHover()
+            dwellStart = ProcessInfo.processInfo.systemUptime
+            dwellPoint = point
+            return
+        }
+
+        if hoverItem !== candidate { setHover(candidate, at: point) }
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - dwellStart > 0.26, abs(dwellPoint.x - point.x) < 16, abs(dwellPoint.y - point.y) < 16 {
+            folderCandidate = candidate
+        } else if abs(dwellPoint.x - point.x) >= 16 || abs(dwellPoint.y - point.y) >= 16 {
+            dwellStart = now
+            dwellPoint = point
+        }
     }
 
     // MARK: 拖拽命中辅助
@@ -621,21 +633,32 @@ final class GridCanvasView: NSView {
         return idx
     }
 
-    /// 几何格子 → 插入下标
+    /// 几何格子 → 插入下标（拖拽期间空位固定在起始格子，所以这个换算是稳定的）
     private func insertionIndex(page: Int, slot: Int) -> Int {
         var idx = slot
-        if let gap, gap.page == page, gap.slot <= slot { idx -= 1 }
+        if let gap, gap.page == page, gap.slot < slot { idx -= 1 }
         return max(0, min(displayPages[page].count, idx))
     }
 
-    /// 指针是否压在某个格子上。已锁定的目标用宽松范围（迟滞），未锁定的用中心 70% 区域。
-    private func isOver(point: NSPoint, page: Int, slot: Int, sticky: Bool) -> Bool {
+    /// 格子内「图标图」本身的矩形：不含标签，也不含格子留白。
+    /// 命中判定必须用它而不是整个格子——格子有 36pt 的横向留白，
+    /// 用格子判定会出现"还没压到图标就已经命中/目标被推开"的错位。
+    private func iconImageRect(page: Int, slot: Int) -> CGRect {
         let frame = frameForItem(page: page, slot: slot)
-        // frame 已经是 scrollLayer 内容坐标，减掉 scroll 偏移即可换算到指针所在的内容坐标
-        let relX = (point.x + scrollSpring.value - frame.minX) / frame.width
-        let relY = (point.y - frame.minY) / frame.height
-        if sticky { return relX > -0.2 && relX < 1.2 && relY > -0.15 && relY < 1.15 }
-        return relX > 0.15 && relX < 0.85 && relY > 0.1 && relY < 0.9
+        let bottomPad = (metrics.cellHeight - metrics.imageSize + 22) / 2
+        return CGRect(x: frame.minX + (metrics.cellWidth - metrics.imageSize) / 2,
+                      y: frame.minY + bottomPad,
+                      width: metrics.imageSize,
+                      height: metrics.imageSize)
+    }
+
+    /// 指针是否压在某个图标上。已锁定的目标用宽松范围（迟滞），避免边界反复横跳。
+    private func isOverIcon(point: NSPoint, page: Int, slot: Int, sticky: Bool) -> Bool {
+        let rect = iconImageRect(page: page, slot: slot)
+        let pad: CGFloat = sticky ? 34 : 10
+        // frameForItem 用的是 scrollLayer 内容坐标，指针要加上滚动偏移才在同一坐标系
+        let p = CGPoint(x: point.x + scrollSpring.value, y: point.y)
+        return rect.insetBy(dx: -pad, dy: -pad).contains(p)
     }
 
     private func setHover(_ item: LaunchItem, at point: NSPoint) {
@@ -767,7 +790,33 @@ final class GridCanvasView: NSView {
                 layer.animateIn(delay: delay)
             }
         }
-        _ = maxDelay
+        settleAfterOpen(delay: maxDelay)
+    }
+
+    /// 入场动画跑完后，把 zoom/图标图层上残留的动画彻底清掉并重新确认 contentsScale。
+    /// 之前只用 isRemovedOnCompletion=false + fillMode=.both 让动画永久挂在图层上，
+    /// render server 会一直按动画起始的 scale 去做栅格化再拉伸显示，
+    /// 表现就是「刚打开时那一页发虚，滑到别的页（图层是新建的、没这个残留）就清楚了」。
+    private func settleAfterOpen(delay: CFTimeInterval) {
+        let wait = delay + 0.9
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.zoomLayer.removeAllAnimations()
+            self.zoomLayer.transform = CATransform3DIdentity
+            self.zoomLayer.opacity = self.folderModeActive ? 0.18 : 1
+            self.zoomLayer.contentsScale = self.contentsScale
+            for layer in self.iconLayers.values {
+                layer.removeAnimation(forKey: "appearScale")
+                layer.removeAnimation(forKey: "appearFade")
+                layer.removeAnimation(forKey: "positionSpring")
+                if !layer.jiggling {
+                    layer.transform = CATransform3DIdentity
+                    layer.opacity = 1
+                }
+                layer.contentsScale = self.contentsScale
+            }
+            self.tracePageState("afterOpen")
+        }
     }
 
     func animateOut(completion: @escaping () -> Void) {
@@ -788,6 +837,7 @@ final class GridCanvasView: NSView {
     }
 
     func setFolderMode(_ active: Bool, animated: Bool = true) {
+        folderModeActive = active
         CATransaction.begin()
         CATransaction.setAnimationDuration(animated ? 0.3 : 0)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))

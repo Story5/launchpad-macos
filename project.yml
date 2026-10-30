@@ -32,8 +32,8 @@ targets:
         PRODUCT_NAME: LaunchPad
         # 版本号唯一来源：Info.plist 里用 $(MARKETING_VERSION)/$(CURRENT_PROJECT_VERSION) 引用，
         # 改版本只需改这里（不要在 Info.plist 里再硬编码一份）
-        MARKETING_VERSION: "0.0.3"
-        CURRENT_PROJECT_VERSION: "3"
+        MARKETING_VERSION: "0.0.4"
+        CURRENT_PROJECT_VERSION: "4"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
     info:
       path: LaunchPad/Info.plist
@@ -48,8 +48,8 @@ targets:
         # 版本号唯一来源就在这里：xcodegen 会在 generate 时把它们注入 LaunchPad/Info.plist。
         # 注意不要在 Info.plist 里写 $(MARKETING_VERSION) —— xcodegen 会按自己的默认值
         # 提前展开成 1.0，导致改 version 不生效。
-        CFBundleShortVersionString: "0.0.3"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "0.0.4"
+        CFBundleVersion: "4"
     schemes:
       LaunchPad:
         build:

@@ -89,11 +89,11 @@ final class IconStore: @unchecked Sendable {
         switch request.kind {
         case .app(let path):
             guard let url = iconFileURL(bundleURL: URL(fileURLWithPath: path)) else { return nil }
-            return downscale(imageSourceAt: url, pixelSize: request.pixelSize)
+            return conformToSystemShape(downscale(imageSourceAt: url, pixelSize: request.pixelSize))
         case .folder(let childPaths):
             let children = childPaths.prefix(9).compactMap { path -> CGImage? in
                 guard let url = iconFileURL(bundleURL: URL(fileURLWithPath: path)) else { return nil }
-                return downscale(imageSourceAt: url, pixelSize: 64)
+                return conformToSystemShape(downscale(imageSourceAt: url, pixelSize: 64))
             }
             return synthesizeFolderIcon(children: children, pixelSize: request.pixelSize)
         case .unknown:
@@ -174,6 +174,67 @@ final class IconStore: @unchecked Sendable {
         return rasterize(cg, pixelSize: pixelSize)
     }
 
+    // MARK: - 图标形状归一（对齐 macOS 官方图标模板）
+
+    /// macOS 图标模板的实测几何（用系统 App 的 icns 逐像素量出来的）：
+    /// 1024 画布里图标占 824（四周各留 100），圆角 192，且圆角就是标准圆弧。
+    private static let shapeInset: CGFloat = 0.0977      // 100 / 1024
+    private static let shapeRadiusRatio: CGFloat = 0.1875 // 192 / 1024
+
+    /// 少数 App 的 icns 是「满幅方形」的（四角不透明，图标内容直接铺满画布），
+    /// 例如系统自带的 Phone.app —— 系统里显示时是标准圆角，直接读 icns 就会是一个方疙瘩。
+    /// 这里按官方模板把它重绘一遍：内容缩到内框 + 套标准圆角。
+    static func conformToSystemShape(_ image: CGImage?) -> CGImage? {
+        guard let image, isFullBleedSquare(image) else { return image }
+        let side = max(8, image.width)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil,
+                                  width: side,
+                                  height: side,
+                                  bitsPerComponent: 8,
+                                  bytesPerRow: 0,
+                                  space: colorSpace,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return image }
+        let plate = CGRect(x: CGFloat(side) * shapeInset,
+                           y: CGFloat(side) * shapeInset,
+                           width: CGFloat(side) * (1 - 2 * shapeInset),
+                           height: CGFloat(side) * (1 - 2 * shapeInset))
+        let radius = CGFloat(side) * shapeRadiusRatio
+        ctx.saveGState()
+        ctx.addPath(CGPath(roundedRect: plate, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        ctx.clip()
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: plate)
+        ctx.restoreGState()
+        return ctx.makeImage() ?? image
+    }
+
+    /// 四角是否不透明：不透明说明它没有苹果图标那样的圆角轮廓，需要补形状
+    private static func isFullBleedSquare(_ image: CGImage) -> Bool {
+        let s = 40
+        var buf = [UInt8](repeating: 0, count: s * s * 4)
+        guard let ctx = CGContext(data: &buf,
+                                  width: s, height: s,
+                                  bitsPerComponent: 8,
+                                  bytesPerRow: s * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return false }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: s, height: s))
+        var sum = 0
+        for y in 0..<3 {
+            for x in 0..<3 {
+                // 四个角各取 3×3
+                sum += Int(buf[(y * s + x) * 4 + 3])
+                sum += Int(buf[(y * s + (s - 1 - x)) * 4 + 3])
+                sum += Int(buf[((s - 1 - y) * s + x) * 4 + 3])
+                sum += Int(buf[((s - 1 - y) * s + (s - 1 - x)) * 4 + 3])
+            }
+        }
+        return Double(sum) / 36.0 / 255.0 > 0.5
+    }
+
     /// 合成文件夹图标：圆角底板 + 3×3 迷你应用图标（对齐原生 LaunchPad 的文件夹样式）
     private static func synthesizeFolderIcon(children: [CGImage], pixelSize: Int) -> CGImage? {
         let size = max(8, pixelSize)
@@ -224,7 +285,8 @@ final class IconStore: @unchecked Sendable {
     // MARK: - 磁盘缓存
 
     private func cacheKey(_ request: IconRequest) -> String {
-        "\(stableHash(request.key))-\(request.pixelSize)"
+        // 后缀 -s2：图标形状归一上线后，旧的磁盘缓存必须作废重生成
+        "\(stableHash(request.key))-\(request.pixelSize)-s2"
     }
 
     private func diskURL(key: String) -> URL {
