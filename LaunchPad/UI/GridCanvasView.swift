@@ -564,40 +564,80 @@ final class GridCanvasView: NSView {
 
         guard let hit = slotAt(point: point), hit.page < displayPages.count else { return }
 
-        // 判断是否「压在」另一个图标上（格子中心 60% 区域）
-        var occupant: LaunchItem?
-        if hit.slot < displayPages[hit.page].count {
-            let candidate = displayPages[hit.page][hit.slot]
-            let frame = frameForItem(page: hit.page, slot: hit.slot)
-            let relX = (point.x + scrollSpring.value - CGFloat(hit.page) * pageSize - frame.minX) / frame.width
-            let relY = (point.y - frame.minY) / frame.height
-            if relX > 0.2 && relX < 0.8 && relY > 0.15 && relY < 0.85 {
-                occupant = candidate
+        // 几何格子 → 实际条目下标（要扣掉已打开的空位，否则会命中错位一格）
+        if let index = itemIndex(atPage: hit.page, slot: hit.slot) {
+            let candidate = displayPages[hit.page][index]
+            // sticky：已经锁定的目标用更宽松的判定范围，避免在格子边界反复横跳
+            if candidate !== item, isOver(point: point, page: hit.page, slot: hit.slot, sticky: hoverItem === candidate) {
+                if hoverItem !== candidate { setHover(candidate, at: point) }
+                // 压在图标上时冻结布局：不再开空位。
+                // 否则一靠近，空位动画就把目标图标推走，永远对不准（原来的"一直在动"）。
+                setGap(nil)
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - dwellStart > 0.28, abs(dwellPoint.x - point.x) < 14, abs(dwellPoint.y - point.y) < 14 {
+                    folderCandidate = candidate
+                } else if abs(dwellPoint.x - point.x) >= 14 || abs(dwellPoint.y - point.y) >= 14 {
+                    dwellStart = now
+                    dwellPoint = point
+                }
+                return
             }
         }
 
-        if let occupant, occupant !== item {
-            hoverItem = occupant
-            folderCandidate = nil
-            setGap(nil)
-            highlight(occupant)
-            // 停留 0.45s 视为「合并为文件夹」
-            let now = ProcessInfo.processInfo.systemUptime
-            if now - dwellStart > 0.45, abs(dwellPoint.x - point.x) < 10, abs(dwellPoint.y - point.y) < 10 {
-                folderCandidate = occupant
-            } else if abs(dwellPoint.x - point.x) >= 10 || abs(dwellPoint.y - point.y) >= 10 {
-                dwellStart = now
-                dwellPoint = point
-            }
-            return
-        }
-
+        clearHover()
         dwellStart = ProcessInfo.processInfo.systemUptime
         dwellPoint = point
-        if let previous = hoverItem { highlight(previous, on: false) }
+        setGap((page: hit.page, slot: insertionIndex(page: hit.page, slot: hit.slot)))
+    }
+
+    // MARK: 拖拽命中辅助
+
+    /// 几何格子 → 该页 items 的下标；若该格子当前是空出来的空位，返回 nil
+    private func itemIndex(atPage page: Int, slot: Int) -> Int? {
+        var idx = slot
+        if let gap, gap.page == page {
+            if gap.slot == slot { return nil }
+            if gap.slot < slot { idx -= 1 }
+        }
+        guard idx >= 0, idx < displayPages[page].count else { return nil }
+        return idx
+    }
+
+    /// 几何格子 → 插入下标
+    private func insertionIndex(page: Int, slot: Int) -> Int {
+        var idx = slot
+        if let gap, gap.page == page, gap.slot <= slot { idx -= 1 }
+        return max(0, min(displayPages[page].count, idx))
+    }
+
+    /// 指针是否压在某个格子上。已锁定的目标用宽松范围（迟滞），未锁定的用中心 70% 区域。
+    private func isOver(point: NSPoint, page: Int, slot: Int, sticky: Bool) -> Bool {
+        let frame = frameForItem(page: page, slot: slot)
+        // frame 已经是 scrollLayer 内容坐标，减掉 scroll 偏移即可换算到指针所在的内容坐标
+        let relX = (point.x + scrollSpring.value - frame.minX) / frame.width
+        let relY = (point.y - frame.minY) / frame.height
+        if sticky { return relX > -0.2 && relX < 1.2 && relY > -0.15 && relY < 1.15 }
+        return relX > 0.15 && relX < 0.85 && relY > 0.1 && relY < 0.9
+    }
+
+    private func setHover(_ item: LaunchItem, at point: NSPoint) {
+        clearHover()
+        hoverItem = item
+        folderCandidate = nil
+        highlight(item)
+        // 目标停止抖动，方便对准
+        iconLayers[ObjectIdentifier(item)]?.stopJiggle()
+        dwellStart = ProcessInfo.processInfo.systemUptime
+        dwellPoint = point
+    }
+
+    private func clearHover() {
+        guard let previous = hoverItem else { return }
+        highlight(previous, on: false)
+        // 恢复抖动（还在拖拽中的话）
+        if isDragging { iconLayers[ObjectIdentifier(previous)]?.startJiggle() }
         hoverItem = nil
         folderCandidate = nil
-        setGap((page: hit.page, slot: min(hit.slot, displayPages[hit.page].count)))
     }
 
     private func setGap(_ newGap: (page: Int, slot: Int)?) {
@@ -634,7 +674,7 @@ final class GridCanvasView: NSView {
 
         let destination: (page: Int, slot: Int)
         if let hit = slotAt(point: point), hit.page < displayPages.count {
-            destination = (hit.page, min(hit.slot, displayPages[hit.page].count))
+            destination = (hit.page, insertionIndex(page: hit.page, slot: hit.slot))
         } else {
             destination = (currentPage, displayPages[currentPage].count)
         }

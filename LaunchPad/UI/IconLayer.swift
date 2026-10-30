@@ -76,6 +76,14 @@ final class IconLayer: CALayer {
         let imageX = (cellSize.width - imageSize) / 2
         imageLayer.frame = CGRect(x: imageX, y: cellSize.height - top - imageSize,
                                   width: imageSize, height: imageSize)
+        // 显式给阴影形状：否则每个图标都要走一次离屏渲染去算阴影轮廓。
+        // 中间页会同时存活 3 页（135 个图层），这一步能省掉 135 次离屏渲染。
+        // macOS 图标是超椭圆，0.22 的圆角比例足够贴合，肉眼无差别。
+        let shadowRadiusRatio = imageSize * 0.22
+        imageLayer.shadowPath = CGPath(roundedRect: imageLayer.bounds,
+                                       cornerWidth: shadowRadiusRatio,
+                                       cornerHeight: shadowRadiusRatio,
+                                       transform: nil)
         titleLayer.frame = CGRect(x: 4, y: cellSize.height - top - imageSize - 6 - 16,
                                   width: cellSize.width - 8, height: 16)
 
