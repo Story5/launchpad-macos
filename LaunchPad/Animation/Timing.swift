@@ -42,6 +42,8 @@ enum LPTiming {
     static let launchPop: CFTimeInterval    = 0.22
     static let jigglePeriod: CFTimeInterval = 0.22
     static let jiggleAngle: CGFloat         = 0.028   // 弧度 ≈ 1.6°
+    /// 长按多久进入抖动（编辑）模式，对齐原生 LaunchPad 的手感
+    static let longPress: CFTimeInterval    = 0.5
 }
 
 // MARK: - CA 动画工厂（全部跑在 render server，主线程零开销，天然 120Hz）

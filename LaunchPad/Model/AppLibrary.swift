@@ -229,6 +229,9 @@ final class Library {
         return folder
     }
 
+    /// 按 id 取回条目（跨线程回调里不能传 LaunchItem 本体，只能传 id 回来查）
+    func item(byID id: String) -> LaunchItem? { registry[id] }
+
     func removeFromPages(_ item: LaunchItem) {
         if let loc = location(of: item) { pages[loc.page].remove(at: loc.slot) }
         normalize()

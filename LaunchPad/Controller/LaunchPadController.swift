@@ -154,6 +154,7 @@ final class LaunchPadController: NSViewController {
         isPresented = false
         closeFolder(animated: false)
         searchBar.clear()
+        canvas.exitEditing()
         canvas.clearSelection()
         window?.makeFirstResponder(nil)
 
@@ -258,6 +259,8 @@ final class LaunchPadController: NSViewController {
         switch selector {
         case #selector(NSResponder.cancelOperation(_:)):
             if folderPanel != nil { closeFolder(); return true }
+            // Esc 先退出抖动（编辑）模式，再点一次才关闭 LaunchPad（原生行为）
+            if canvas.isEditingMode { canvas.exitEditing(); return true }
             if searchBar.isSearching {
                 searchBar.clear()
                 applySearch("")
@@ -311,6 +314,50 @@ final class LaunchPadController: NSViewController {
         }
     }
 
+    // MARK: - 删除 App（编辑模式下点 ⊗）
+
+    /// 原生 LaunchPad 的确认框：居中弹出（不挂在窗口上），带 App 图标
+    private func confirmDelete(_ item: LaunchItem) {
+        guard let path = item.bundlePath else { return }
+        let name = item.name
+        let alert = NSAlert()
+        alert.messageText = "要将“\(name)”移到废纸篓吗？"
+        alert.informativeText = "“\(name)”会被移到废纸篓。如果它是从 App Store 下载的，你可以随时重新下载。"
+        alert.addButton(withTitle: "移到废纸篓")
+        alert.addButton(withTitle: "取消")
+        alert.alertStyle = .warning
+        alert.icon = NSWorkspace.shared.icon(forFile: path)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        delete(item: item)
+    }
+
+    private func delete(item: LaunchItem) {
+        guard let path = item.bundlePath else { return }
+        let url = URL(fileURLWithPath: path)
+        // 回收回调是 @Sendable，不能把 LaunchItem 本体带过去，只传 id/name 回来再查
+        let itemID = item.id
+        let itemName = item.name
+        NSWorkspace.shared.recycle([url]) { [weak self] _, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error {
+                    let alert = NSAlert()
+                    alert.messageText = "无法删除“\(itemName)”"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .critical
+                    alert.runModal()
+                    return
+                }
+                guard let target = self.library.item(byID: itemID) else { return }
+                // 从文件夹/页面里摘掉再落盘（removeFromPages 内部会 save）
+                target.parent?.children.removeAll { $0 === target }
+                self.library.removeFromPages(target)
+                self.canvas.setDisplayPages(self.library.pages, animated: true)
+                self.pageDots.set(pageCount: self.library.pages.count, current: self.canvas.pageIndex)
+            }
+        }
+    }
+
     private func openFolder(_ item: LaunchItem, frame: CGRect) {
         guard folderPanel == nil else { return }
         let panel = FolderPanelView(frame: view.bounds)
@@ -357,6 +404,10 @@ extension LaunchPadController: GridCanvasDelegate {
 
     func gridCanvas(_ canvas: GridCanvasView, didRequestOpenFolder item: LaunchItem, frame: CGRect) {
         openFolder(item, frame: frame)
+    }
+
+    func gridCanvas(_ canvas: GridCanvasView, didRequestDelete item: LaunchItem) {
+        confirmDelete(item)
     }
 
     func gridCanvasDidMutateLayout(_ canvas: GridCanvasView) {

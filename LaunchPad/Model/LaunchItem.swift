@@ -11,16 +11,32 @@ final class LaunchItem {
     var children: [LaunchItem] = []
     weak var parent: LaunchItem?
 
+    /// 抖动（编辑）模式下是否显示左上角的删除按钮。
+    /// 原生 LaunchPad 只对 Mac App Store 安装的 App 给删除按钮 ——
+    /// 手动拖进 /Applications 的第三方 App 和系统内置 App 都没有（只能自己拖到废纸篓）。
+    var canDelete: Bool
+
     // 搜索索引
     private(set) var searchKeys: [String] = []
 
-    init(id: String, name: String, bundlePath: String?, bundleIdentifier: String?, isFolder: Bool) {
+    init(id: String, name: String, bundlePath: String?, bundleIdentifier: String?,
+         isFolder: Bool, canDelete: Bool? = nil) {
         self.id = id
         self.name = name
         self.bundlePath = bundlePath
         self.bundleIdentifier = bundleIdentifier
         self.isFolder = isFolder
+        self.canDelete = canDelete ?? Self.isRemovable(bundlePath: bundlePath, isFolder: isFolder)
         refreshSearchKeys()
+    }
+
+    /// 判定是否「可卸载」：只有带 App Store 收据的 App 才算。
+    /// 想放宽成「非系统目录里用户能删的都算」，把这里改成 || isWritableByUser 即可。
+    private static func isRemovable(bundlePath: String?, isFolder: Bool) -> Bool {
+        guard !isFolder, let path = bundlePath else { return false }
+        // App Store 安装 → Contents/_MASReceipt/receipt
+        let receipt = (path as NSString).appendingPathComponent("Contents/_MASReceipt/receipt")
+        return FileManager.default.fileExists(atPath: receipt)
     }
 
     func refreshSearchKeys() {

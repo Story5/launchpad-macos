@@ -6,6 +6,8 @@ import QuartzCore
     func gridCanvasDidClickBackground(_ canvas: GridCanvasView)
     func gridCanvas(_ canvas: GridCanvasView, didRequestOpen item: LaunchItem)
     func gridCanvas(_ canvas: GridCanvasView, didRequestOpenFolder item: LaunchItem, frame: CGRect)
+    /// 编辑模式下点了某个 App 左上角的 ⊗
+    func gridCanvas(_ canvas: GridCanvasView, didRequestDelete item: LaunchItem)
     func gridCanvasDidMutateLayout(_ canvas: GridCanvasView)
 }
 
@@ -52,6 +54,11 @@ final class GridCanvasView: NSView {
     private var pendingItem: LaunchItem?
     private var pendingLayer: IconLayer?
     private var downPoint: NSPoint = .zero
+    /// 编辑（抖动）模式：长按或拖动图标进入。此时单击图标才打开 App，点击空白/按 Esc 退出。
+    private var isEditing = false
+    /// 本次按下是否已经触发了「长按进入编辑模式」——是的话抬手不能打开 App
+    private var pressDidEnterEditing = false
+    private var longPressWork: DispatchWorkItem?
     private var isDragging = false
     private var dragItem: LaunchItem?
     private var dragLayer: IconLayer?
@@ -202,6 +209,11 @@ final class GridCanvasView: NSView {
             let col = slot % metrics.columns
             let row = slot / metrics.columns
             layer.animateIn(delay: LPAnimation.rippleDelay(column: col, row: row, columns: metrics.columns, rows: metrics.rows))
+        }
+        // 翻页/重排时新建的图层要跟上当前状态，否则编辑模式下新出现的图标不抖、也没 ⊗
+        if isEditing {
+            layer.startJiggle()
+            layer.setDeleteBadgeVisible(item.canDelete, animated: false)
         }
         return layer
     }
@@ -516,7 +528,19 @@ final class GridCanvasView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // 每次按下都是新的一次交互；不清掉的话，上一次「长按后直接拖拽」留下的
+        // 标记会让下一次单击误判成「长按触发的抬手」而不打开 App
+        pressDidEnterEditing = false
+        // 编辑模式下先判删除按钮：⊗ 压在图标左上角，优先级高于图标本身
+        if isEditing, let target = deleteBadgeHit(at: point) {
+            pendingItem = nil
+            pendingLayer = nil
+            delegate?.gridCanvas(self, didRequestDelete: target)
+            return
+        }
         guard let hit = itemAt(point: point) else {
+            // 抖动模式下点空白是「退出编辑」，不是关闭 LaunchPad（原生行为）
+            if isEditing { exitEditing(); return }
             delegate?.gridCanvasDidClickBackground(self)
             return
         }
@@ -524,6 +548,7 @@ final class GridCanvasView: NSView {
         pendingLayer = hit.layer
         downPoint = point
         hit.layer.setPressed(true)
+        scheduleLongPress()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -533,6 +558,8 @@ final class GridCanvasView: NSView {
             let dx = point.x - downPoint.x
             let dy = point.y - downPoint.y
             guard dx * dx + dy * dy > 36 else { return }
+            longPressWork?.cancel()
+            longPressWork = nil
             beginDrag(item: item, layer: layer, at: point)
         }
         updateDrag(to: point)
@@ -540,16 +567,86 @@ final class GridCanvasView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        longPressWork?.cancel()
+        longPressWork = nil
         if isDragging {
             finishDrag(at: point)
             return
         }
         pendingLayer?.setPressed(false)
-        if let item = pendingItem {
+        // 原生行为：长按触发抖动的那一次抬手不会打开 App；
+        // 已经在抖动状态下的普通点击才会打开。
+        if pressDidEnterEditing {
+            pressDidEnterEditing = false
+        } else if let item = pendingItem {
             delegate?.gridCanvas(self, didRequestOpen: item)
         }
         pendingItem = nil
         pendingLayer = nil
+    }
+
+    // MARK: - 编辑（抖动）模式
+
+    var isEditingMode: Bool { isEditing }
+
+    private func scheduleLongPress() {
+        longPressWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pressDidEnterEditing = true
+            self.enterEditing(animated: true, haptic: true)
+        }
+        longPressWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + LPTiming.longPress, execute: work)
+    }
+
+    private func enterEditing(animated: Bool, haptic: Bool = false) {
+        let wasEditing = isEditing
+        isEditing = true
+        applyEditingState(animated: animated)
+        // 长按进入抖动时给一次轻触反馈，对齐原生 LaunchPad 的手感（拖拽进入时不震）
+        if haptic, !wasEditing {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+    }
+
+    func exitEditing() {
+        guard isEditing else { return }
+        isEditing = false
+        for layer in iconLayers.values {
+            layer.stopJiggle()
+            layer.setDeleteBadgeVisible(false, animated: true)
+        }
+    }
+
+    /// 把所有在屏图层切成「抖动 + 可删的显示 ⊗」
+    private func applyEditingState(animated: Bool) {
+        for layer in iconLayers.values {
+            layer.startJiggle()
+            layer.setDeleteBadgeVisible(layer.item?.canDelete == true, animated: animated)
+        }
+    }
+
+    // MARK: 删除按钮命中
+
+    /// 编辑模式下指针是否压在某个可删除图标的 ⊗ 上
+    private func deleteBadgeHit(at point: NSPoint) -> LaunchItem? {
+        for page in visiblePageRange() where page < displayPages.count {
+            for (slot, item) in displayPages[page].enumerated() {
+                guard item.canDelete else { continue }
+                if toViewSpace(deleteBadgeRect(page: page, slot: slot)).contains(point) { return item }
+            }
+        }
+        return nil
+    }
+
+    /// ⊗ 的命中矩形（scrollLayer 内容坐标）。视觉直径 22，命中放大到 28 好点。
+    private func deleteBadgeRect(page: Int, slot: Int) -> CGRect {
+        let img = iconImageRect(page: page, slot: slot)
+        let cx = img.minX + 4
+        let cy = img.maxY - 14
+        let hit: CGFloat = 28
+        return CGRect(x: cx - hit / 2, y: cy - hit / 2, width: hit, height: hit)
     }
 
     // MARK: 拖拽
@@ -588,9 +685,10 @@ final class GridCanvasView: NSView {
         drag.add(LPAnimation.spring("transform.scale", params: LPSpring.lift, from: 1.0, to: 1.14), forKey: "lift")
         drag.transform = CATransform3DMakeScale(1.14, 1.14, 1)
 
-        for iconLayer in iconLayers.values where iconLayer !== layer {
-            iconLayer.startJiggle()
-        }
+        // 原生 LaunchPad：一拖动图标，整屏就进入编辑（抖动）模式，
+        // 被拎起来的那个图标左上角也照样带 ⊗
+        enterEditing(animated: true)
+        drag.setDeleteBadgeVisible(item.canDelete, animated: false)
         // 空位已钉住，重排一次把坐标对齐（位置本来就一致，不会有可见位移）
         relayout(animated: false)
         moveDragLayer(to: point)
@@ -784,7 +882,12 @@ final class GridCanvasView: NSView {
         folderCandidate = nil
         pendingItem = nil
         pendingLayer = nil
-        stopJiggle()
+        // 原生行为：拖放完仍停在编辑模式，图标继续抖，要点空白或按 Esc 才退出
+        if isEditing {
+            applyEditingState(animated: false)
+        } else {
+            stopJiggle()
+        }
         syncLayers(animate: false)
         delegate?.gridCanvasDidMutateLayout(self)
     }

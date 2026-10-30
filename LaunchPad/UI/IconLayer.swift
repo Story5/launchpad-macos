@@ -8,11 +8,18 @@ final class IconLayer: CALayer {
     private let imageLayer = CALayer()
     private let titleLayer = CATextLayer()
     private let highlightLayer = CAShapeLayer()
+    /// 编辑模式下的删除按钮（图标左上角的 ⊗），整层跟着图标一起抖
+    private let deleteLayer = CALayer()
+    private let deleteRing = CAShapeLayer()
+    private let deleteCross = CAShapeLayer()
 
     private var cellSize: CGSize = .zero
     private var isJiggling = false
     private var isPressed = false
     private var isDimmed = false
+    private var deleteVisible = false
+    /// 删除按钮的视觉直径（命中范围会略大一点，见 GridCanvasView.deleteBadgeRect）
+    private static let badgeDiameter: CGFloat = 22
 
     var iconPixelSize: CGFloat = 104
 
@@ -58,9 +65,35 @@ final class IconLayer: CALayer {
         highlightLayer.fillColor = NSColor.white.withAlphaComponent(0.16).cgColor
         highlightLayer.opacity = 0
 
+        deleteRing.fillColor = NSColor.white.withAlphaComponent(0.96).cgColor
+        deleteRing.shadowColor = CGColor(gray: 0, alpha: 0.45)
+        deleteRing.shadowOpacity = 0.45
+        deleteRing.shadowRadius = 2
+        deleteRing.shadowOffset = CGSize(width: 0, height: -1)
+        let d = Self.badgeDiameter
+        deleteRing.path = CGPath(ellipseIn: CGRect(x: 0, y: 0, width: d, height: d), transform: nil)
+
+        // ×：两条圆头短线
+        let cross = CGMutablePath()
+        let a = d * 0.31, b = d * 0.69
+        cross.move(to: CGPoint(x: a, y: a))
+        cross.addLine(to: CGPoint(x: b, y: b))
+        cross.move(to: CGPoint(x: b, y: a))
+        cross.addLine(to: CGPoint(x: a, y: b))
+        deleteCross.path = cross
+        deleteCross.strokeColor = NSColor(white: 0.30, alpha: 1).cgColor
+        deleteCross.lineWidth = 2.2
+        deleteCross.lineCap = .round
+
+        deleteLayer.addSublayer(deleteRing)
+        deleteLayer.addSublayer(deleteCross)
+        deleteLayer.opacity = 0
+        deleteLayer.transform = CATransform3DMakeScale(0.4, 0.4, 1)
+
         addSublayer(highlightLayer)
         addSublayer(imageLayer)
         addSublayer(titleLayer)
+        addSublayer(deleteLayer)
     }
 
     // MARK: 配置
@@ -100,6 +133,14 @@ final class IconLayer: CALayer {
         highlightLayer.frame = highlightRect
         highlightLayer.path = CGPath(roundedRect: highlightLayer.bounds, cornerWidth: 14, cornerHeight: 14, transform: nil)
 
+        // 删除按钮压在图标左上角，圆心往图标里缩 4pt（与原生 LaunchPad 一致）
+        let d = Self.badgeDiameter
+        deleteLayer.frame = CGRect(x: imageX + 4 - d / 2,
+                                   y: cellSize.height - top - 14 - d / 2,
+                                   width: d, height: d)
+        deleteRing.frame = deleteLayer.bounds
+        deleteCross.frame = deleteLayer.bounds
+
         titleLayer.string = item.name
     }
 
@@ -128,6 +169,25 @@ final class IconLayer: CALayer {
 
     func setHighlighted(_ highlighted: Bool) {
         highlightLayer.opacity = highlighted ? 1 : 0
+    }
+
+    /// 编辑模式下是否显示删除按钮（带弹出/收回动画）
+    func setDeleteBadgeVisible(_ visible: Bool, animated: Bool = true) {
+        guard visible != deleteVisible else { return }
+        deleteVisible = visible
+        deleteLayer.removeAnimation(forKey: "badgePop")
+        deleteLayer.removeAnimation(forKey: "badgeFade")
+        if animated {
+            deleteLayer.add(LPAnimation.spring("transform.scale",
+                                               params: LPSpring.press,
+                                               from: visible ? 0.4 : 1.0,
+                                               to: visible ? 1.0 : 0.4),
+                            forKey: "badgePop")
+            deleteLayer.add(LPAnimation.fade(duration: 0.14, from: visible ? 0 : 1, to: visible ? 1 : 0),
+                            forKey: "badgeFade")
+        }
+        deleteLayer.opacity = visible ? 1 : 0
+        deleteLayer.transform = CATransform3DMakeScale(visible ? 1 : 0.4, visible ? 1 : 0.4, 1)
     }
 
     func setDimmed(_ dimmed: Bool, animated: Bool) {
@@ -207,5 +267,9 @@ final class IconLayer: CALayer {
         opacity = 1
         transform = CATransform3DIdentity
         isPressed = false
+        deleteLayer.removeAllAnimations()
+        deleteLayer.opacity = 0
+        deleteLayer.transform = CATransform3DMakeScale(0.4, 0.4, 1)
+        deleteVisible = false
     }
 }
