@@ -10,6 +10,7 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 
 | 版本 | 文件 | 适用 |
 |---|---|---|
+| v0.0.3 | `LaunchPad-0.0.3-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.2 | `LaunchPad-0.0.2-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.1 | `LaunchPad-0.0.1-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 
