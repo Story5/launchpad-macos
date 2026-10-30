@@ -836,13 +836,13 @@ final class GridCanvasView: NSView {
         let expect = Int(metrics.imageSize * contentsScale)
         var parts: [String] = []
         for page in visiblePageRange() where page < displayPages.count {
-            var n = 0, lowOpacity = 0, minPres: CGFloat = 1, noImage = 0, smallImage = 0, wrongScale = 0
+            var n = 0, lowOpacity = 0, minPres: Float = 1, noImage = 0, smallImage = 0, wrongScale = 0
             for item in displayPages[page] {
                 guard let layer = iconLayers[ObjectIdentifier(item)] else { continue }
                 n += 1
-                let pres = layer.presentation()?.opacity ?? layer.opacity
+                let pres: Float = layer.presentation()?.opacity ?? layer.opacity
                 if pres < 0.99 || layer.opacity < 0.99 { lowOpacity += 1 }
-                minPres = min(minPres, pres)
+                minPres = Swift.min(minPres, pres)
                 guard let img = layer.currentIcon() else { noImage += 1; continue }
                 if img.width < expect { smallImage += 1 }
                 if abs(layer.contentsScale - contentsScale) > 0.01 { wrongScale += 1 }
