@@ -182,6 +182,10 @@ final class GridCanvasView: NSView {
                 slot += 1
             }
         }
+
+        // 兜底：不管图层是新建的、复用的还是刚从池里捞出来的，都对齐一次编辑态。
+        // 只靠 acquireLayer 里那一处不够稳 —— 复用分支会提前 return。
+        if isEditing { applyEditingState(animated: false) }
     }
 
     private func acquireLayer(for item: LaunchItem, animate: Bool, page: Int, slot: Int) -> IconLayer {

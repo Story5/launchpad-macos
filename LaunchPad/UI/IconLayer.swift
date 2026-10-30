@@ -267,6 +267,10 @@ final class IconLayer: CALayer {
         opacity = 1
         transform = CATransform3DIdentity
         isPressed = false
+        // 必须把抖动标记一起清掉：图层是池化复用的，这里 removeAllAnimations()
+        // 已经把 jiggle 动画摘了，若 isJiggling 还留着 true，复用时 startJiggle()
+        // 会被自己的 guard 挡住，抖动就再也加不回来（表现：翻页后图标不抖了）。
+        isJiggling = false
         deleteLayer.removeAllAnimations()
         deleteLayer.opacity = 0
         deleteLayer.transform = CATransform3DMakeScale(0.4, 0.4, 1)
