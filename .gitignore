@@ -1,0 +1,18 @@
+# Xcode
+.build/
+DerivedData/
+*.xcuserstate
+*.moved-aside
+# 工程由 project.yml 经 xcodegen 生成，不入库
+LaunchPadReplica.xcodeproj/
+
+# 构建产物
+dist/
+
+# macOS
+.DS_Store
+.AppleDouble
+._*
+
+# 本地工具状态（含本机绝对路径）
+.workbuddy/

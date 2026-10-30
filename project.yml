@@ -1,0 +1,54 @@
+name: LaunchPadReplica
+options:
+  bundleIdPrefix: com.story5.launchpad
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    SWIFT_EMIT_LOC_STRINGS: YES
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    CLANG_ENABLE_MODULES: YES
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+targets:
+  LaunchPad:
+    type: application
+    platform: macOS
+    sources:
+      - path: LaunchPad
+        excludes:
+          - "**/Info.plist"
+          - "Resources/**"
+      - path: LaunchPad/Resources
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.story5.launchpad
+        PRODUCT_NAME: LaunchPad
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+    info:
+      path: LaunchPad/Info.plist
+      properties:
+        CFBundleDisplayName: LaunchPad
+        CFBundleName: LaunchPad
+        CFBundleIconFile: AppIcon
+        LSMinimumSystemVersion: "13.0"
+        NSHighResolutionCapable: "YES"
+        NSSupportsAutomaticTermination: "YES"
+        NSHumanReadableCopyright: "LaunchPad replica for macOS"
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+    schemes:
+      LaunchPad:
+        build:
+          targets:
+            LaunchPad: all
+        run:
+          customLLDBInitFile: ""
