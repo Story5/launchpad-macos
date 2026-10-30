@@ -69,6 +69,9 @@ final class GridCanvasView: NSView {
     private var dwellPoint: NSPoint = .zero
     private var folderCandidate: LaunchItem?
     private var autoPageWorkItem: DispatchWorkItem?
+    /// 当前停靠在哪个边缘感应区（-1 左 / +1 右 / 0 不在感应区）
+    private var autoPageSide: Int = 0
+    private var lastDragPoint: NSPoint = .zero
     /// 文件夹面板打开时网格会被压暗缩小，收尾动画要还原成这个值
     private var folderModeActive = false
 
@@ -658,6 +661,8 @@ final class GridCanvasView: NSView {
     private func beginDrag(item: LaunchItem, layer: IconLayer, at point: NSPoint) {
         isDragging = true
         dragItem = item
+        lastDragPoint = point
+        autoPageSide = 0
         layer.setPressed(false)
 
         let drag = IconLayer()
@@ -708,6 +713,7 @@ final class GridCanvasView: NSView {
 
     private func updateDrag(to point: NSPoint) {
         guard isDragging, let item = dragItem else { return }
+        lastDragPoint = point
         moveDragLayer(to: point)
 
         // 边缘自动翻页
@@ -817,26 +823,46 @@ final class GridCanvasView: NSView {
         iconLayers[ObjectIdentifier(item)]?.setHighlighted(on)
     }
 
+    /// 拖拽自动翻页的感应区宽度：按屏宽比例算（原生 LaunchPad 大约是屏宽的 1/7），
+    /// 再夹在 [110, 220] —— 之前写死 90pt，在 1440 宽的屏上只占 6%，得贴着屏幕边框才触发。
+    private var autoPageEdge: CGFloat {
+        min(220, max(110, viewSize.width * 0.15))
+    }
+
     private func scheduleAutoPageIfNeeded(at point: NSPoint) {
-        autoPageWorkItem?.cancel()
-        autoPageWorkItem = nil
-        let edge: CGFloat = 90
-        var target: Int?
-        if point.x < edge, currentPage > 0 { target = currentPage - 1 }
-        else if point.x > viewSize.width - edge, currentPage < displayPages.count - 1 { target = currentPage + 1 }
-        guard let target else { return }
+        let edge = autoPageEdge
+        var side = 0
+        if point.x < edge, currentPage > 0 { side = -1 }
+        else if point.x > viewSize.width - edge, currentPage < displayPages.count - 1 { side = 1 }
+
+        // 换边（或离开感应区）才重新计时；同一侧持续停留时不重置，
+        // 否则指针在边缘里稍微动一下等待就从头开始，几乎永远翻不了页。
+        if side != autoPageSide {
+            autoPageWorkItem?.cancel()
+            autoPageWorkItem = nil
+            autoPageSide = side
+        }
+        guard side != 0, autoPageWorkItem == nil else { return }
+
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isDragging else { return }
+            let target = self.currentPage + side
+            guard target >= 0, target < self.displayPages.count else { return }
             self.scrollToPage(target, animated: true)
+            // 指针还停在感应区就继续排下一次 —— 原生 LaunchPad 会一页一页接着翻
+            self.autoPageSide = 0
+            self.autoPageWorkItem = nil
+            self.scheduleAutoPageIfNeeded(at: self.lastDragPoint)
         }
         autoPageWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + LPTiming.dragAutoPage, execute: work)
     }
 
     private func finishDrag(at point: NSPoint) {
         guard let item = dragItem, let drag = dragLayer else { return }
         autoPageWorkItem?.cancel()
         autoPageWorkItem = nil
+        autoPageSide = 0
         isDragging = false
 
         let destination: (page: Int, slot: Int)
