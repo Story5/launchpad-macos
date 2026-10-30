@@ -96,6 +96,7 @@ final class GridCanvasView: NSView {
         applyOffset()
         syncLayers(animate: animated)
         delegate?.gridCanvasDidChangePage(self)
+        tracePageState("setDisplayPages")
     }
 
     func update(metrics: GridMetrics, contentsScale: CGFloat) {
@@ -323,6 +324,7 @@ final class GridCanvasView: NSView {
                 let page = scrollSpring.value / pageSize
                 print(String(format: "[LP] settled: offset=%.1f page=%.3f %@",
                              scrollSpring.value, page, abs(page - page.rounded()) < 0.001 ? "(整页)" : "(!! 非整页)"))
+                tracePageState("state")
             }
         }
     }
@@ -825,6 +827,31 @@ final class GridCanvasView: NSView {
               selection.slot < displayPages[selection.page].count else { return }
         let item = displayPages[selection.page][selection.slot]
         iconLayers[ObjectIdentifier(item)]?.setHighlighted(true)
+    }
+
+    /// LP_TRACE_PAGE=1 时打印每页图层的实际状态：透明度、图标分辨率、contentsScale。
+    /// 用来区分「透明度被压低」和「分辨率不够」两类发虚。
+    func tracePageState(_ tag: String) {
+        guard Self.tracePaging else { return }
+        let expect = Int(metrics.imageSize * contentsScale)
+        var parts: [String] = []
+        for page in visiblePageRange() where page < displayPages.count {
+            var n = 0, lowOpacity = 0, minPres: CGFloat = 1, noImage = 0, smallImage = 0, wrongScale = 0
+            for item in displayPages[page] {
+                guard let layer = iconLayers[ObjectIdentifier(item)] else { continue }
+                n += 1
+                let pres = layer.presentation()?.opacity ?? layer.opacity
+                if pres < 0.99 || layer.opacity < 0.99 { lowOpacity += 1 }
+                minPres = min(minPres, pres)
+                guard let img = layer.currentIcon() else { noImage += 1; continue }
+                if img.width < expect { smallImage += 1 }
+                if abs(layer.contentsScale - contentsScale) > 0.01 { wrongScale += 1 }
+            }
+            parts.append(String(format: "p%d[n=%d minOpacity=%.2f 低透明=%d 无图=%d 小图=%d scale错=%d]",
+                                page, n, minPres, lowOpacity, noImage, smallImage, wrongScale))
+        }
+        print(String(format: "[LP] %@ cur=%d zoomOpacity=%.2f expectPx=%d | %@",
+                     tag, currentPage, zoomLayer.opacity, expect, parts.joined(separator: " ")))
     }
 
     func debugBenchmark() {
