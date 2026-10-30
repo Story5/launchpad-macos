@@ -31,6 +31,11 @@ final class IconLayer: CALayer {
 
     required init?(coder: NSCoder) { nil }
 
+    /// 只更新标题（改名时用）。图层是复用的，不重新 configure 的话标签不会跟着变。
+    func applyName(_ name: String) {
+        titleLayer.string = name
+    }
+
     private func commonInit() {
         imageLayer.contentsGravity = .resizeAspect
         imageLayer.minificationFilter = .trilinear

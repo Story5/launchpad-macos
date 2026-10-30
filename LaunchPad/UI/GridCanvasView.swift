@@ -178,7 +178,11 @@ final class GridCanvasView: NSView {
     }
 
     private func acquireLayer(for item: LaunchItem, animate: Bool, page: Int, slot: Int) -> IconLayer {
-        if let existing = iconLayers[ObjectIdentifier(item)] { return existing }
+        // 复用已有图层时也要刷新标题：文件夹改名后只有这里能把新名字写回标签
+        if let existing = iconLayers[ObjectIdentifier(item)] {
+            existing.applyName(item.name)
+            return existing
+        }
         let layer: IconLayer
         if let reused = layerPool.popLast() {
             layer = reused
@@ -233,6 +237,11 @@ final class GridCanvasView: NSView {
                   self.iconLayers[targetID] === layer else { return }
             layer.applyIcon(image)
         }
+    }
+
+    /// 改名后立即把新名字写回网格上的标签（不必等下一次 syncLayers）
+    func refreshName(for item: LaunchItem) {
+        iconLayers[ObjectIdentifier(item)]?.applyName(item.name)
     }
 
     func refreshIcon(for item: LaunchItem) {

@@ -383,5 +383,7 @@ extension LaunchPadController: FolderPanelDelegate {
     func folderPanelDidChangeContent(_ panel: FolderPanelView) {
         library.save()
         canvas.setDisplayPages(library.pages, animated: false)
+        // 改名后必须显式刷新网格上的标签：图层是复用的，setDisplayPages 不会重画已有标题
+        if let folder = panel.currentFolder { canvas.refreshName(for: folder) }
     }
 }

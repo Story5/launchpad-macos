@@ -3,7 +3,8 @@ import Foundation
 /// LaunchPad 中的一个条目：应用或文件夹
 final class LaunchItem {
     let id: String
-    var name: String
+    /// 改名时同步重建搜索索引，否则用新名字搜不到
+    var name: String { didSet { if oldValue != name { refreshSearchKeys() } } }
     var bundlePath: String?      // .app 绝对路径；文件夹为 nil
     var bundleIdentifier: String?
     var isFolder: Bool

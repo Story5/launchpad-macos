@@ -22,6 +22,8 @@ final class FolderPanelView: NSView {
     private var iconLayers: [ObjectIdentifier: IconLayer] = [:]
 
     private var folder: LaunchItem?
+    /// 当前打开的文件夹（供外部在改名后刷新网格标签）
+    var currentFolder: LaunchItem? { folder }
     private var metrics = FolderMetrics()
     private var pages: [[LaunchItem]] = [[]]
     private var page = 0

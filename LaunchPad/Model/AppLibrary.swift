@@ -241,9 +241,30 @@ final class Library {
     }
 
     private static func folderName(for item: LaunchItem?) -> String {
-        guard let item else { return "文件夹" }
-        // 用分类名做默认文件夹名（粗粒度归类，贴近原生新建文件夹的命名）
+        // 用 App 自己声明的分类（LSApplicationCategoryType）命名，
+        // 贴近原生 LaunchPad 新建文件夹时的自动命名；取不到就回退到「文件夹」
+        if let item, let path = item.bundlePath,
+           let category = categoryName(bundlePath: path) { return category }
         return "文件夹"
+    }
+
+    private static let categoryNames: [String: String] = [
+        "business": "商务", "developer-tools": "开发工具", "education": "教育",
+        "entertainment": "娱乐", "finance": "财务", "graphics-and-design": "图形与设计",
+        "healthcare-and-fitness": "健康与健身", "lifestyle": "生活", "medical": "医疗",
+        "music": "音乐", "news": "新闻", "photography": "摄影", "productivity": "效率",
+        "reference": "参考", "social-networking": "社交", "sports": "体育",
+        "travel": "旅行", "utilities": "实用工具", "video": "视频", "weather": "天气"
+    ]
+
+    private static func categoryName(bundlePath: String) -> String? {
+        let plistURL = URL(fileURLWithPath: bundlePath).appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: plistURL),
+              let dict = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+              let raw = dict["LSApplicationCategoryType"] as? String else { return nil }
+        let key = raw.replacingOccurrences(of: "public.app-category.", with: "")
+        if key.hasPrefix("games") { return "游戏" }
+        return categoryNames[key]
     }
 
     // MARK: 搜索
