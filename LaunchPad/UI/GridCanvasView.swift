@@ -40,6 +40,10 @@ final class GridCanvasView: NSView {
     private var pagingStartPage = 0
     private var pagingAccum: CGFloat = 0
     private var pagingSnapWork: DispatchWorkItem?
+    /// 是否要保留邻页图层。只有滑动/翻页动画进行中才为 true，
+    /// 静止时收紧到「仅当前页」——三页同时存活会让图层包围盒宽达 3 屏，
+    /// 2x 下超过 render server 的单个 surface 上限，整页会被降分辨率渲染（发虚）。
+    private var pagingNeedsNeighbors = false
 
     private var pageSize: CGFloat { max(1, viewSize.width) }
     private var maxOffset: CGFloat { CGFloat(max(0, displayPages.count - 1)) * pageSize }
@@ -139,8 +143,10 @@ final class GridCanvasView: NSView {
 
     private func visiblePageRange() -> Range<Int> {
         guard !displayPages.isEmpty else { return 0..<0 }
-        let lower = max(0, currentPage - 1)
-        let upper = min(displayPages.count - 1, currentPage + 1)
+        // 滑动/拖拽中才带邻页；静止时只留当前页，把图层包围盒压到 1 屏宽
+        let span = (pagingNeedsNeighbors || isDragging) ? 1 : 0
+        let lower = max(0, currentPage - span)
+        let upper = min(displayPages.count - 1, currentPage + span)
         return lower..<(upper + 1)
     }
 
@@ -296,12 +302,15 @@ final class GridCanvasView: NSView {
         let target = CGFloat(clamped) * pageSize
         currentPage = clamped
         if !animated {
+            pagingNeedsNeighbors = false
             scrollSpring.jump(to: target)
             applyOffset()
             syncLayers(animate: false)
             delegate?.gridCanvasDidChangePage(self)
             return
         }
+        // 动画期间保留邻页，静止后再收紧（见 stepScroll）
+        pagingNeedsNeighbors = true
         scrollSpring.retarget(target, initialVelocity: initialVelocity)
         syncLayers(animate: false)
         delegate?.gridCanvasDidChangePage(self)
@@ -319,6 +328,8 @@ final class GridCanvasView: NSView {
         applyOffset()
         if settled {
             driver.stop()
+            // 静止后立刻收紧到「仅当前页」，避免三页同时存活导致整页被降分辨率渲染
+            pagingNeedsNeighbors = false
             syncLayers(animate: false)
             if Self.tracePaging {
                 let page = scrollSpring.value / pageSize
@@ -407,12 +418,17 @@ final class GridCanvasView: NSView {
         pagingAccum = 0
         pagingStartPage = currentPage
         driver.stop()
+        // 手势一开始就先把邻页图层建好（此时它们还在屏幕外），
+        // 免得滑到一半才创建、图标来不及加载而"半路冒出来"
+        pagingNeedsNeighbors = true
+        syncLayers(animate: false)
     }
 
     private func resetPagingGesture() {
         pagingActive = false
         pagingAccum = 0
         wheelVelocity = 0
+        pagingNeedsNeighbors = false
         pagingSnapWork?.cancel()
         pagingSnapWork = nil
     }
