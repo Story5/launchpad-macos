@@ -929,8 +929,12 @@ final class GridCanvasView: NSView {
     // MARK: - 从文件夹面板拖出
 
     /// 把从文件夹面板里拖出来的图标落到网格上（point 为本视图坐标）。
-    /// 落点规则与网格内拖拽保持一致：压在文件夹上就投进去、压在 App 上就合并成新文件夹，
-    /// 落在空处就按格子插入。文件夹本身的摘出/解散由 AppLibrary 负责。
+    ///
+    /// 默认就是「取出来当独立 App」：插到落点格子上，该位置原有的图标往后让一位。
+    /// 只有指针**确实压在某个文件夹图标上**时才投进那个文件夹。
+    ///
+    /// 之前用的是整格命中（itemAt）→ 网格满页时（45/45）松手位置必然落在某个格子上，
+    /// 于是每次拖出来都会被合并成新文件夹，永远拿不到独立 App。
     func dropItemFromFolder(_ item: LaunchItem, at point: NSPoint, fromFolder folder: LaunchItem) {
         guard let library else { return }
         var page = currentPage
@@ -940,24 +944,32 @@ final class GridCanvasView: NSView {
             slot = hit.slot
         }
 
-        if let target = itemAt(point: point)?.item, target !== item, !item.isFolder {
-            // 目标图标上：先把条目从原文件夹摘下来，再交给「投入文件夹 / 新建文件夹」
+        if let target = iconHitAt(point: point), target.isFolder, target !== item, !item.isFolder {
+            // 明确压在某个文件夹上 → 投进去
             folder.children.removeAll { $0 === item }
-            item.parent = nil
-            if target.isFolder {
-                item.parent = target
-                target.children.append(item)
-                library.save()
-            } else {
-                let atSlot = displayPages[page].firstIndex(where: { $0 === target }) ?? slot
-                library.createFolder(with: [target, item], at: page, slot: atSlot)
-            }
+            item.parent = target
+            target.children.append(item)
+            library.save()
         } else {
+            // 其余情况一律当成「放回网格」：插到落点，原位置图标后移；页满时按溢出规则挤到下一页
             library.takeOut(item, from: folder, toPage: page, slot: slot)
         }
 
         setDisplayPages(library.pages, animated: true)
         delegate?.gridCanvasDidMutateLayout(self)
+    }
+
+    /// 指针是否压在某个图标「图」上（不是整个格子）。
+    /// 格子有 36pt 横向留白，用整格判定会把"放在图标旁边"误判成"压在图标上"。
+    private func iconHitAt(point: NSPoint) -> LaunchItem? {
+        guard let hit = slotAt(point: point),
+              hit.page < displayPages.count,
+              hit.slot < displayPages[hit.page].count else { return nil }
+        let rect = iconImageRect(page: hit.page, slot: hit.slot)
+        // frameForItem 用的是 scrollLayer 内容坐标，指针要加上滚动偏移才在同一坐标系
+        let p = CGPoint(x: point.x + scrollSpring.value, y: point.y)
+        guard rect.insetBy(dx: -4, dy: -4).contains(p) else { return nil }
+        return displayPages[hit.page][hit.slot]
     }
 
     // MARK: - 外观状态

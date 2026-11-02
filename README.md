@@ -10,7 +10,7 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 
 | 版本 | 文件 | 适用 |
 |---|---|---|
-| v0.0.10 | `LaunchPad-0.0.10-arm64.dmg`（推荐，含 `/Applications` 替身）/ `LaunchPad-0.0.10-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
+| v0.0.10 | `LaunchPad-0.0.10-arm64.dmg`（含 `/Applications` 替身） | Apple Silicon（arm64），macOS 13+ |
 | v0.0.9 | `LaunchPad-0.0.9-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.8 | `LaunchPad-0.0.8-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.7 | `LaunchPad-0.0.7-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
@@ -21,7 +21,7 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 | v0.0.2 | `LaunchPad-0.0.2-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.1 | `LaunchPad-0.0.1-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 
-**安装方式**：`.dmg` 打开后把 `LaunchPad.app` 拖到窗口里的 `Applications` 替身上即可；`.zip` 解压后手动拖进 `/Applications`。
+**安装方式**：打开 `.dmg`，把 `LaunchPad.app` 拖到窗口里的 `Applications` 替身上即可。
 
 当前是 **ad-hoc 签名、未做 Apple 公证**，首次打开若被 Gatekeeper 拦截，用「右键 → 打开」放行（公证需要 Apple 开发者账号）。
 
@@ -33,7 +33,7 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 | 背景 | 读取当前桌面壁纸 → **一次性**预渲染高斯模糊图 → 打开时清晰图与模糊图交叉淡入 + 轻微放大 |
 | 图标网格 | 自动扫描 `/Applications`、`/System/Applications`、`~/Applications` 及其 `Utilities`；9×5 / 7×5 自适应 |
 | 分页 | **整页翻页**：一次双指手势最多翻一页（**左滑 → 下一页**，与原生一致），跟手但超出一页有橡皮筋，松手必定吸附到整页边界；也支持滚轮、点击页码点 |
-| 文件夹 | 拖拽图标互相叠加即可建文件夹；点击文件夹从图标位置形变展开面板；支持面板内翻页、双击标题重命名；**打开后可以把 App 拖出文件夹**（拖到面板外落到网格，拖到别的文件夹图标上就投进去，成员不足 2 个时文件夹自动解散） |
+| 文件夹 | 拖拽图标互相叠加即可建文件夹；点击文件夹从图标位置形变展开面板；支持面板内翻页、双击标题重命名；**打开后可以把 App 拖出文件夹**（拖到面板外即成为独立 App，只有明确压在另一个文件夹图标上时才投入它，成员不足 2 个时文件夹自动解散） |
 | 搜索 | 顶部搜索框，输入即过滤（支持中文拼音全拼、拼音首字母、英文词组首字母），结果从左上角重排，不匹配项淡出 |
 | 拖拽 | 拖动图标时整屏进入抖动，落位时弹簧让位；拖进屏幕边缘感应区（屏宽 15%，约 216pt）停留约 0.45s 即自动翻页，停着不动会一页页继续翻；拖到图标上合并为文件夹 |
 | 编辑模式 | **长按图标 0.5s** 进入抖动（有触感反馈）；此时 Mac App Store 安装的 App 左上角出现 ⊗，点击后确认移入废纸篓；点空白或 `Esc` 退出 |
@@ -112,9 +112,9 @@ killall Finder Dock
 # 方式一：一键脚本（产物 dist/LaunchPad.app）
 ./scripts/build.sh Release
 
-# 打发布包（二选一或都要）
-./scripts/build.sh Release --zip   # dist/LaunchPad-<版本>-arm64.zip
-./scripts/make_dmg.sh              # dist/LaunchPad-<版本>-arm64.dmg（含 /Applications 替身）
+# 打发布包（只发 dmg）
+./scripts/build.sh Release --dmg   # → dist/LaunchPad-<版本>-arm64.dmg
+./scripts/make_dmg.sh              # 只打 dmg，不重新构建
 
 # 方式二：Xcode
 xcodegen generate          # 工程由 project.yml 生成
@@ -208,7 +208,7 @@ LaunchPad/
 └── Resources/AppIcon.icns         应用图标（由 scripts/make_icon.py 生成）
 
 scripts/
-├── build.sh                       一键构建（图标缺失时自动生成，--zip 顺带打 zip 包）
+├── build.sh                       一键构建（图标缺失时自动生成，--dmg 顺带打 dmg 包）
 ├── make_dmg.sh                    把构建产物打成 dmg（含 /Applications 替身）
 └── make_icon.py                   程序化生成 AppIcon.icns
 ```

@@ -1,8 +1,7 @@
 #!/bin/bash
 # 一键构建 LaunchPad.app（产物输出到 dist/LaunchPad.app）
-# 用法：./scripts/build.sh [Debug|Release] [--zip]
-#   --zip  顺带打发布包 dist/LaunchPad-<版本>-arm64.zip
-#          （必须在移除 dist/LaunchPad.app 之前打，否则没东西可打）
+# 用法：./scripts/build.sh [Debug|Release] [--dmg]
+#   --dmg  顺带打发布包 dist/LaunchPad-<版本>-arm64.dmg（现在只发 dmg，不再出 zip）
 
 set -euo pipefail
 
@@ -11,8 +10,8 @@ cd "$ROOT"
 
 CONFIG="${1:-Release}"
 DD="$ROOT/.build"
-MAKE_ZIP=0
-for arg in "${@:2}"; do [ "$arg" = "--zip" ] && MAKE_ZIP=1; done
+MAKE_DMG=0
+for arg in "${@:2}"; do [ "$arg" = "--dmg" ] && MAKE_DMG=1; done
 
 # 应用图标：缺失时自动生成（也可手动 `python3 scripts/make_icon.py` 重建）
 if [ ! -f "$ROOT/LaunchPad/Resources/AppIcon.icns" ]; then
@@ -114,13 +113,9 @@ fi
 # 该目录早就被 Spotlight 索引过，单纯注销几秒后系统又会把它注册回来
 # （.metadata_never_index 只对「从没被索引过」的目录有效）。所以直接移除文件，
 # 只在 dist 保留发布用的 zip。没装到 /Applications 时才保留 dist/LaunchPad.app 作为运行版。
-if [ "$MAKE_ZIP" = "1" ]; then
-  VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
-            "$ROOT/dist/LaunchPad.app/Contents/Info.plist")
-  ZIP="$ROOT/dist/LaunchPad-${VERSION}-arm64.zip"
-  rm -f "$ZIP"
-  ditto -c -k --sequesterRsrc --keepParent "$ROOT/dist/LaunchPad.app" "$ZIP"
-  echo "==> 打包：${ZIP}"
+if [ "$MAKE_DMG" = "1" ]; then
+  # 打 dmg（脚本自己从 .build 取产物，不依赖 dist/LaunchPad.app）
+  "$ROOT/scripts/make_dmg.sh"
 fi
 
 if [ -d "$INSTALLED" ]; then
