@@ -10,7 +10,7 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 
 | 版本 | 文件 | 适用 |
 |---|---|---|
-| v0.0.10 | `LaunchPad-0.0.10-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
+| v0.0.10 | `LaunchPad-0.0.10-arm64.dmg`（推荐，含 `/Applications` 替身）/ `LaunchPad-0.0.10-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.9 | `LaunchPad-0.0.9-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.8 | `LaunchPad-0.0.8-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.7 | `LaunchPad-0.0.7-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
@@ -21,7 +21,9 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 | v0.0.2 | `LaunchPad-0.0.2-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.1 | `LaunchPad-0.0.1-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 
-下载解压后把 `LaunchPad.app` 拖进 `/Applications` 即可。当前是 **ad-hoc 签名、未做 Apple 公证**，首次打开若被 Gatekeeper 拦截，用「右键 → 打开」放行（公证需要 Apple 开发者账号）。
+**安装方式**：`.dmg` 打开后把 `LaunchPad.app` 拖到窗口里的 `Applications` 替身上即可；`.zip` 解压后手动拖进 `/Applications`。
+
+当前是 **ad-hoc 签名、未做 Apple 公证**，首次打开若被 Gatekeeper 拦截，用「右键 → 打开」放行（公证需要 Apple 开发者账号）。
 
 ## 功能
 
@@ -109,6 +111,10 @@ killall Finder Dock
 ```bash
 # 方式一：一键脚本（产物 dist/LaunchPad.app）
 ./scripts/build.sh Release
+
+# 打发布包（二选一或都要）
+./scripts/build.sh Release --zip   # dist/LaunchPad-<版本>-arm64.zip
+./scripts/make_dmg.sh              # dist/LaunchPad-<版本>-arm64.dmg（含 /Applications 替身）
 
 # 方式二：Xcode
 xcodegen generate          # 工程由 project.yml 生成
@@ -202,7 +208,8 @@ LaunchPad/
 └── Resources/AppIcon.icns         应用图标（由 scripts/make_icon.py 生成）
 
 scripts/
-├── build.sh                       一键构建（图标缺失时自动生成）
+├── build.sh                       一键构建（图标缺失时自动生成，--zip 顺带打 zip 包）
+├── make_dmg.sh                    把构建产物打成 dmg（含 /Applications 替身）
 └── make_icon.py                   程序化生成 AppIcon.icns
 ```
 
