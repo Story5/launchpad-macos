@@ -10,6 +10,7 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 
 | 版本 | 文件 | 适用 |
 |---|---|---|
+| v0.0.11 | `LaunchPad-0.0.11-arm64.dmg`（含 `/Applications` 替身） | Apple Silicon（arm64），macOS 13+ |
 | v0.0.10 | `LaunchPad-0.0.10-arm64.dmg`（含 `/Applications` 替身） | Apple Silicon（arm64），macOS 13+ |
 | v0.0.9 | `LaunchPad-0.0.9-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.8 | `LaunchPad-0.0.8-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
@@ -218,7 +219,8 @@ scripts/
 ## 已知限制
 
 - **不支持文件夹嵌套**（与原生一致）：把文件夹拖到另一个文件夹上不会合并。
-- **不支持从文件夹里拖出**：面板内拖拽排序尚未实现，只能整组拖入生成文件夹。
+- **从文件夹里拖出的落点只在当前页**：拖出时不会因停在屏幕边缘而自动翻页，需要先翻到目标页再拖。
+- 面板内拖拽只支持「拖出」，不支持在文件夹内部重排顺序。
 - 动态壁纸（`.heic` 序列 / 航拍）取不到静态帧时会退化为纯色渐变背景。
 - 图标来自 bundle 的 `.icns` / 资源目录；少数只用 asset catalog 且无 icns 的应用会走 `NSWorkspace` 兜底，首次加载略慢（之后进磁盘缓存）。
 - 全局热键 `F4` 若被系统或其它工具占用，会自动降级为 `⌥Space`（启动日志 `hotkey=` 可查）。
