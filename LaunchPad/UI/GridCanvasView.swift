@@ -926,6 +926,40 @@ final class GridCanvasView: NSView {
         for layer in iconLayers.values { layer.stopJiggle(); layer.setHighlighted(false) }
     }
 
+    // MARK: - 从文件夹面板拖出
+
+    /// 把从文件夹面板里拖出来的图标落到网格上（point 为本视图坐标）。
+    /// 落点规则与网格内拖拽保持一致：压在文件夹上就投进去、压在 App 上就合并成新文件夹，
+    /// 落在空处就按格子插入。文件夹本身的摘出/解散由 AppLibrary 负责。
+    func dropItemFromFolder(_ item: LaunchItem, at point: NSPoint, fromFolder folder: LaunchItem) {
+        guard let library else { return }
+        var page = currentPage
+        var slot = displayPages[currentPage].count
+        if let hit = slotAt(point: point), hit.page < displayPages.count {
+            page = hit.page
+            slot = hit.slot
+        }
+
+        if let target = itemAt(point: point)?.item, target !== item, !item.isFolder {
+            // 目标图标上：先把条目从原文件夹摘下来，再交给「投入文件夹 / 新建文件夹」
+            folder.children.removeAll { $0 === item }
+            item.parent = nil
+            if target.isFolder {
+                item.parent = target
+                target.children.append(item)
+                library.save()
+            } else {
+                let atSlot = displayPages[page].firstIndex(where: { $0 === target }) ?? slot
+                library.createFolder(with: [target, item], at: page, slot: atSlot)
+            }
+        } else {
+            library.takeOut(item, from: folder, toPage: page, slot: slot)
+        }
+
+        setDisplayPages(library.pages, animated: true)
+        delegate?.gridCanvasDidMutateLayout(self)
+    }
+
     // MARK: - 外观状态
 
     func animateLaunch(for item: LaunchItem) {

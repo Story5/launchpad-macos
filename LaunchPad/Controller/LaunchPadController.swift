@@ -431,6 +431,31 @@ extension LaunchPadController: FolderPanelDelegate {
         closeFolder()
     }
 
+    func folderPanel(_ panel: FolderPanelView, didDragOut item: LaunchItem, at point: NSPoint) {
+        guard let folder = panel.currentFolder else { return }
+        // 面板坐标 → 网格坐标（两者都是全屏子视图，但显式换算更稳）
+        canvas.dropItemFromFolder(item, at: canvas.convert(point, from: panel), fromFolder: folder)
+        if library.dissolveFolderIfNeeded(folder) {
+            // 成员不足 2 个，文件夹解散
+            closeFolder()
+        } else {
+            panel.refreshContents()
+        }
+        pageDots.set(pageCount: library.pages.count, current: canvas.pageIndex)
+        for item in library.allTopLevelItems() where item.isFolder {
+            canvas.refreshIcon(for: item)
+        }
+    }
+
+    func folderPanelDidBeginItemDrag(_ panel: FolderPanelView) {
+        // 拖出去的时候要能看清网格：临时取消压暗
+        canvas.setFolderMode(false)
+    }
+
+    func folderPanelDidEndItemDrag(_ panel: FolderPanelView) {
+        if folderPanel != nil { canvas.setFolderMode(true) }
+    }
+
     func folderPanelDidChangeContent(_ panel: FolderPanelView) {
         library.save()
         canvas.setDisplayPages(library.pages, animated: false)

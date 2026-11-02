@@ -5,6 +5,16 @@ import QuartzCore
     func folderPanel(_ panel: FolderPanelView, didRequestOpen item: LaunchItem)
     func folderPanelDidClose(_ panel: FolderPanelView)
     func folderPanelDidChangeContent(_ panel: FolderPanelView)
+    /// 从面板里把图标拖到了面板外（point 为面板视图坐标）→ 应当把图标移出文件夹
+    func folderPanel(_ panel: FolderPanelView, didDragOut item: LaunchItem, at point: NSPoint)
+    /// 拖拽开始 / 结束：用来临时取消网格压暗，让用户看清要放到哪一格
+    func folderPanelDidBeginItemDrag(_ panel: FolderPanelView)
+    func folderPanelDidEndItemDrag(_ panel: FolderPanelView)
+}
+
+extension FolderPanelDelegate {
+    func folderPanelDidBeginItemDrag(_ panel: FolderPanelView) {}
+    func folderPanelDidEndItemDrag(_ panel: FolderPanelView) {}
 }
 
 /// 文件夹面板：从图标位置形变展开（bounds/position/cornerRadius 三属性弹簧同动），
@@ -30,6 +40,15 @@ final class FolderPanelView: NSView {
     private var isOpen = false
     private var originFrame: CGRect = .zero
     private var renameField: NSTextField?
+
+    // 拖拽（把图标拖出文件夹）
+    private var pendingItem: LaunchItem?
+    private var pendingLayer: IconLayer?
+    private var downPoint: NSPoint = .zero
+    private var isItemDragging = false
+    private var dragItem: LaunchItem?
+    private var dragLayer: IconLayer?
+    private var dragGrabOffset: CGPoint = .zero
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -151,6 +170,15 @@ final class FolderPanelView: NSView {
         guard isOpen else { completion?(); return }
         isOpen = false
         dismissRename(commit: false)
+        // 拖拽中关面板（比如拖出后文件夹解散）时别留下半透明的面板和悬空的副本
+        dragLayer?.removeFromSuperlayer()
+        dragLayer = nil
+        dragItem = nil
+        isItemDragging = false
+        pendingItem = nil
+        pendingLayer = nil
+        panelLayer.opacity = 1
+        shadowLayer.opacity = 1
 
         let size = metrics.panelSize
         let currentFrame = panelLayer.frame
@@ -295,7 +323,35 @@ final class FolderPanelView: NSView {
             return
         }
         guard let hit = itemAt(point: point) else { return }
-        delegate?.folderPanel(self, didRequestOpen: hit.item)
+        // 抬手才打开 App：按下就打开的话，一拖就会被误判成点击
+        pendingItem = hit.item
+        pendingLayer = hit.layer
+        downPoint = point
+        hit.layer.setPressed(true)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard pendingItem != nil else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        if !isItemDragging {
+            guard hypot(point.x - downPoint.x, point.y - downPoint.y) > 6 else { return }
+            beginItemDrag(at: point)
+        }
+        moveDragLayer(to: point)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if isItemDragging {
+            finishItemDrag(at: point)
+            return
+        }
+        let item = pendingItem
+        pendingLayer?.setPressed(false)
+        pendingItem = nil
+        pendingLayer = nil
+        guard let item else { return }
+        delegate?.folderPanel(self, didRequestOpen: item)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -303,6 +359,89 @@ final class FolderPanelView: NSView {
         // scrollingDeltaX 是手指移动方向：双指向左滑 → deltaX < 0 → 下一页（与主网格同一约定）
         if event.scrollingDeltaX > 12 { showPage(max(0, page - 1)) }
         else if event.scrollingDeltaX < -12 { showPage(min(pages.count - 1, page + 1)) }
+    }
+
+    // MARK: 拖拽（把图标拖出文件夹）
+
+    private func beginItemDrag(at point: NSPoint) {
+        guard let item = pendingItem, let source = pendingLayer else { return }
+        isItemDragging = true
+        dragItem = item
+        source.setPressed(false)
+
+        let drag = IconLayer()
+        let scale = window?.backingScaleFactor ?? 2
+        drag.configure(item: item,
+                       cellSize: CGSize(width: metrics.cellWidth, height: metrics.cellHeight),
+                       imageSize: metrics.imageSize,
+                       contentsScale: scale)
+        drag.applyIcon(source.currentIcon())
+
+        // 原图层在 iconContainer 里（还带着翻页位移），必须换算到本视图坐标
+        let start = layer?.convert(source.frame, from: iconContainer) ?? source.frame
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        drag.frame = start
+        // 挂在根层而不是 panelLayer 下：panelLayer 拖动时会淡下去，副本要一直清晰
+        layer?.addSublayer(drag)
+        dragLayer = drag
+        dragGrabOffset = CGPoint(x: point.x - start.midX, y: point.y - start.midY)
+        source.opacity = 0
+        CATransaction.commit()
+        drag.add(LPAnimation.spring("transform.scale", params: LPSpring.lift, from: 1.0, to: 1.14), forKey: "lift")
+        drag.transform = CATransform3DMakeScale(1.14, 1.14, 1)
+
+        // 面板让位：淡下去 + 通知外部恢复网格亮度，否则看不清要放哪一格
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.22)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        panelLayer.opacity = 0.35
+        shadowLayer.opacity = 0.25
+        CATransaction.commit()
+        delegate?.folderPanelDidBeginItemDrag(self)
+    }
+
+    private func moveDragLayer(to point: NSPoint) {
+        guard let drag = dragLayer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        drag.position = CGPoint(x: point.x - dragGrabOffset.x, y: point.y - dragGrabOffset.y)
+        CATransaction.commit()
+    }
+
+    private func finishItemDrag(at point: NSPoint) {
+        guard let item = dragItem else { return }
+        let panelFrame = panelLayer.presentation()?.frame ?? panelLayer.frame
+        let droppedOutside = !panelFrame.contains(point)
+
+        dragLayer?.removeFromSuperlayer()
+        dragLayer = nil
+        dragItem = nil
+        isItemDragging = false
+        pendingItem = nil
+        pendingLayer = nil
+
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.22)
+        panelLayer.opacity = 1
+        shadowLayer.opacity = 1
+        CATransaction.commit()
+        delegate?.folderPanelDidEndItemDrag(self)
+
+        if droppedOutside {
+            delegate?.folderPanel(self, didDragOut: item, at: point)
+        } else {
+            // 面板内松手 = 取消，图标回原位
+            iconLayers[ObjectIdentifier(item)]?.opacity = 1
+        }
+    }
+
+    /// 内容变化后重建图标层（拖出图标后刷新面板）。
+    /// 不重算 metrics —— 面板尺寸在打开时就定好了，中途改会让布局错位。
+    func refreshContents() {
+        guard folder != nil, isOpen else { return }
+        buildPages()
+        buildIconLayers(contentsScale: window?.backingScaleFactor ?? 2)
     }
 
     private func showPage(_ index: Int) {

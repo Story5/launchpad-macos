@@ -238,6 +238,50 @@ final class Library {
         save()
     }
 
+    /// 把文件夹里的条目拖回网格：从 folder 摘出，插到指定页/槽。
+    /// 与 moveItem 的区别是源条目本来不在 pages 里（它在 folder.children 中）。
+    func takeOut(_ item: LaunchItem, from folder: LaunchItem, toPage page: Int, slot: Int) {
+        folder.children.removeAll { $0 === item }
+        item.parent = nil
+        ensurePage(page)
+        var target = max(0, min(pages.count - 1, page))
+        var insertSlot = max(0, min(pages[target].count, slot))
+        pages[target].insert(item, at: insertSlot)
+        // 溢出：把末尾条目挤到下一页（与 moveItem 同一套行为）
+        while pages[target].count > metrics.capacity {
+            let overflow = pages[target].removeLast()
+            let next = target + 1
+            if next >= pages.count { pages.append([]) }
+            pages[next].insert(overflow, at: 0)
+            target = next
+            insertSlot = 0
+        }
+        normalize()
+        save()
+    }
+
+    /// 文件夹成员少于 2 个时解散（原生 LaunchPad 行为）：
+    /// 剩 1 个就把那一个放回文件夹原来的位置；剩 0 个直接移除。返回是否解散了。
+    @discardableResult
+    func dissolveFolderIfNeeded(_ folder: LaunchItem) -> Bool {
+        guard folder.isFolder, let loc = location(of: folder) else { return false }
+        switch folder.children.count {
+        case 0:
+            pages[loc.page].remove(at: loc.slot)
+        case 1:
+            let child = folder.children[0]
+            child.parent = nil
+            folder.children.removeAll()
+            pages[loc.page][loc.slot] = child
+            registry.removeValue(forKey: folder.id)
+        default:
+            return false
+        }
+        normalize()
+        save()
+        return true
+    }
+
     func renameFolder(_ folder: LaunchItem, to name: String) {
         folder.name = name
         save()
