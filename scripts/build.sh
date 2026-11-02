@@ -65,18 +65,27 @@ mkdir -p "$ROOT/dist"
 # 同样阻止 Spotlight 索引 dist：只靠 lsregister -u 注销会被系统重新注册回来，
 # 必须让 mds 不再扫这个目录（/Applications 那份是正式安装版，不受影响）。
 touch "$ROOT/dist/.metadata_never_index"
-rm -rf "$ROOT/dist/LaunchPad.app"
-cp -R "$APP" "$ROOT/dist/LaunchPad.app"
 
-# 本机上的「正式安装版」：装过就顺手用新构建覆盖，保证电脑上留的永远是最新版，
-# 同时它也作为唯一允许注册的副本（见下面的 LS 去重）。
+# 本机上的「正式安装版」：装过就直接原地同步过去，**不在 dist 里留 .app 副本**。
+# 两个理由：
+#   1) macOS 27 会把「删除一个 .app bundle」重定向进废纸篓（`rm -rf dist/LaunchPad.app`
+#      也会触发），废纸篓里就多一个「LaunchPad 17-02-33-518.app」，还会被 LS 注册回聚焦；
+#   2) dist 里那份本来就会被 LS 重复注册，是「搜出两个 LaunchPad」的来源之一。
 INSTALLED="/Applications/LaunchPad.app"
-WANT="$ROOT/dist/LaunchPad.app"
 if [ -d "$INSTALLED" ]; then
-  rm -rf "$INSTALLED"
-  cp -R "$ROOT/dist/LaunchPad.app" "$INSTALLED"
+  # rsync 原地同步：只清理 bundle 内部多余文件，bundle 本身不动，不会进废纸篓
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "$APP/" "$INSTALLED/"
+  else
+    rm -rf "$INSTALLED"
+    cp -R "$APP" "$INSTALLED"
+  fi
   WANT="$INSTALLED"
   echo "==> 已更新安装版：${INSTALLED}"
+else
+  rm -rf "$ROOT/dist/LaunchPad.app"
+  cp -R "$APP" "$ROOT/dist/LaunchPad.app"
+  WANT="$ROOT/dist/LaunchPad.app"
 fi
 
 # 只让 WANT 这一份被系统识别，其余全注销
@@ -139,10 +148,11 @@ elif [ "$MAKE_DMG" = "1" ]; then
 fi
 
 if [ -d "$INSTALLED" ]; then
-  rm -rf "$ROOT/dist/LaunchPad.app"
-  echo "==> 已移除多余的 dist/LaunchPad.app（本机以 ${INSTALLED} 为唯一副本）"
+  # 装过 /Applications 时 dist 里不再有 .app 副本（见上面的说明），这里无需清理
+  echo "==> 完成：${INSTALLED}（本机安装版，dist 只放 dmg）"
+  echo "    运行：open \"${INSTALLED}\"（启动后按 F4 或点菜单栏图标）"
+else
+  echo "==> 完成：$ROOT/dist/LaunchPad.app"
+  echo "    安装：cp -R \"$ROOT/dist/LaunchPad.app\" /Applications/（装过之后脚本会自动原地更新它）"
+  echo "    运行：open \"${WANT}\"（启动后按 F4 或点菜单栏图标）"
 fi
-
-echo "==> 完成：$ROOT/dist/LaunchPad.app"
-echo "    安装：cp -R \"$ROOT/dist/LaunchPad.app\" /Applications/（装过之后脚本会自动覆盖更新它）"
-echo "    运行：open \"${WANT}\"（启动后按 F4 或点菜单栏图标）"
