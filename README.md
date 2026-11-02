@@ -10,6 +10,7 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 
 | 版本 | 文件 | 适用 |
 |---|---|---|
+| v0.0.9 | `LaunchPad-0.0.9-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.8 | `LaunchPad-0.0.8-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.7 | `LaunchPad-0.0.7-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
 | v0.0.6 | `LaunchPad-0.0.6-arm64.zip` | Apple Silicon（arm64），macOS 13+ |
@@ -36,7 +37,8 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 | 键盘 | 打字即搜索、方向键移动选择、`Return` 打开、`Esc` 逐层退出（先退编辑模式，再关启动台） |
 | 全局热键 | 默认 `F4`（与原生一致），注册失败自动降级为 `⌥Space` |
 | 程序坞 | Dock 常驻图标：**打开 App 即展开**；切到别的应用（点 Dock 图标、`⌘Tab`）**自动收起**，不会挡住别的 App；收起后点 Dock 图标 / `F4` 都能重新唤起 |
-| 主菜单 | 应用菜单（关于 / 重新扫描 `⌘R` / 服务 / 隐藏 `⌘H` / 退出 `⌘Q`）、编辑菜单（`⌘Z` `⌘C` `⌘V` 等标准快捷键）、窗口菜单（显示启动台 `F4` / 关闭启动台） |
+| 主菜单 | 应用菜单（关于 / 重新扫描 `⌘R` / 服务 / 隐藏 `⌘H` / 退出 `⌘Q`）、编辑菜单（`⌘Z` `⌘C` `⌘V` 等标准快捷键）、窗口菜单（显示启动台 `F4` / 关闭启动台 / 菜单栏图标开关） |
+| 菜单栏图标 | 状态栏常驻九宫格图标：**左键单击 = 显示/关闭启动台**，右键弹菜单（重新扫描 `⌘R`、隐藏图标、关于、退出 `⌘Q`）；可在窗口菜单或右键菜单里关掉，偏好会记住 |
 
 ## 为什么用 AppKit + Core Animation
 
@@ -112,6 +114,9 @@ xcodegen generate          # 工程由 project.yml 生成
 open LaunchPadReplica.xcodeproj    # ⌘R 运行
 ```
 
+> 用 Xcode GUI 编译后，系统 DerivedData 里会多一份被注册的 `LaunchPad.app`，聚焦里就会搜出两个。
+> 跑一次 `./scripts/build.sh Release` 会把重复注册清掉（原理见下文「Spotlight 里搜出多个 LaunchPad？」）。
+
 安装与启动：
 
 ```bash
@@ -124,23 +129,36 @@ open /Applications/LaunchPad.app     # 打开即展开启动台
 > 若你更想要「只驻留菜单栏、不占 Dock 位置」的旧行为，把 `project.yml` 里的 `LSUIElement: "YES"` 加回去，
 > 并把 `LaunchPad/App/LaunchPadMain.swift` 的 `setActivationPolicy(.regular)` 改回 `.accessory` 即可。
 
-### Spotlight 里出现多个 LaunchPad？
+### Spotlight / 聚焦里搜出多个 LaunchPad？
 
-这不是装了两份 —— 是 **LaunchServices 注册了构建中间产物**。`xcodebuild` 会在 `.build/` 里也生成一份
-`LaunchPad.app`，Spotlight 会把它的和 `dist/` 里的那份一起索引；被删掉的旧副本只要索引没刷新，也会残留一条
-（这种残留项通常显示成空白图标，因为旧版本包里可能没有 `Resources/AppIcon.icns`）。
+不是装了两份，是 **LaunchServices 里注册了多份**。Spotlight 的「应用程序」结果读的就是 LaunchServices
+数据库，而不是普通文件索引，所以凡是 `.app` 产物被注册过，就会各占一个结果：
 
-`scripts/build.sh` 已经做了防护：
+| 来源 | 路径 |
+|---|---|
+| 交付版（唯一应该保留的） | `dist/LaunchPad.app` |
+| 脚本构建产物 | `.build/Build/Products/Release/LaunchPad.app` |
+| **Xcode GUI 构建产物** | `~/Library/Developer/Xcode/DerivedData/LaunchPadReplica-*/Build/Products/Release/LaunchPad.app` |
 
-- 给 `.build/` 加 `.metadata_never_index`，阻止 Spotlight 索引构建产物
-- 构建后 `lsregister -u` 注销中间产物、`lsregister -f` 注册 `dist/` 那份
+`xcodebuild` 每次编译都会把自己的产物注册进 LaunchServices；`.metadata_never_index` 只能阻止
+Spotlight 索引文件内容，**挡不住 LS 注册**。
 
-若历史上已经产生了重复项，把旧副本删掉（含回收站里的）后刷新索引：
+`scripts/build.sh` 已经处理了：构建完成后扫一遍 LS 数据库，把除 `dist/LaunchPad.app` 之外的
+同 bundle id 注册全部 `lsregister -u` 注销，最后打印当前注册数（应为 1）。
+
+如果历史残留还在，先看还剩几条：
 
 ```bash
-mdfind "kMDItemCFBundleIdentifier == 'com.story5.launchpad'"   # 先看还剩几条
-sudo mdutil -E /                                               # 重建索引（耗时较长，按需）
+LSR=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSR" -dump | awk '/^path: /{p=$0} /^identifier: +com\.story5\.launchpad$/{print p}'
 ```
+
+> **坑**：只 `lsregister -u` 是不够的。只要那份 `LaunchPad.app` 还在磁盘上、且在 Spotlight 索引范围内，
+> 几秒后系统会把它重新注册回来（实测 6 秒内回弹）。必须让文件不再是 `.app`，比如改名成
+> `LaunchPad.app.0.0.3.disabled`，或直接删掉。单纯删索引（`sudo mdutil -E /`）也没用，根因是文件还在。
+
+另外**尽量不要用 Xcode GUI 直接 ⌘R 编译**，它会往系统 DerivedData 里再放一份已注册的产物；
+需要 GUI 调试时，编译完再跑一次 `./scripts/build.sh Release` 即可把重复注册清掉。
 
 ### 调试参数
 

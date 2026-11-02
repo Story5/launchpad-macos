@@ -19,6 +19,8 @@ enum LaunchPadMain {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller = LaunchPadController()
+    private lazy var statusBar = StatusBarController(controller: controller)
+    private var menuBarIconItem: NSMenuItem?
     private let cmd: NSEvent.ModifierFlags = .command
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -27,7 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         HotKeyCenter.shared.register()
         setupMainMenu()
-        if CommandLine.arguments.contains("--diag") { Self.dumpMainMenu() }
+        // 菜单栏图标：按上次偏好显示（首次运行默认显示）。
+        // 可以从菜单栏菜单的「隐藏菜单栏图标」关掉，再用主菜单「窗口 → 菜单栏图标」开回来。
+        statusBar.onVisibilityChange = { [weak self] visible in
+            self?.menuBarIconItem?.state = visible ? .on : .off
+        }
+        statusBar.install()
+        if CommandLine.arguments.contains("--diag") { dumpMenus() }
 
         // 打开 App 即展开启动台（延迟一点等图标缓存就绪）
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -60,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu(title: "LaunchPad")
         menu.addItem(actionItem("关于 LaunchPad", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
         menu.addItem(.separator())
-        menu.addItem(actionItem("重新扫描应用", #selector(rescanApps(_:)), "r", cmd))
+        menu.addItem(actionItem("重新扫描应用", #selector(rescanApps(_:)), "r", cmd, ownedBySelf: true))
         menu.addItem(.separator())
 
         let services = NSMenu(title: "服务")
@@ -100,30 +108,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func windowMenu() -> NSMenuItem {
         let root = NSMenuItem(title: "窗口", action: nil, keyEquivalent: "")
         let menu = NSMenu(title: "窗口")
-        menu.addItem(actionItem("显示启动台", #selector(showLaunchPad(_:)), Self.f4Key))
-        menu.addItem(actionItem("关闭启动台", #selector(dismissLaunchPad(_:))))
+        menu.addItem(actionItem("显示启动台", #selector(showLaunchPad(_:)), Self.f4Key, [], ownedBySelf: true))
+        menu.addItem(actionItem("关闭启动台", #selector(dismissLaunchPad(_:)), "", [], ownedBySelf: true))
+        menu.addItem(.separator())
+        let iconItem = actionItem("菜单栏图标", #selector(toggleMenuBarIcon(_:)), "", [], ownedBySelf: true)
+        iconItem.state = statusBar.isVisible ? .on : .off
+        menuBarIconItem = iconItem
+        menu.addItem(iconItem)
         menu.addItem(.separator())
         menu.addItem(actionItem("前置全部窗口", #selector(NSApplication.arrangeInFront(_:))))
         root.submenu = menu
         return root
     }
 
-    /// --diag 时打印主菜单结构，便于确认菜单真的建好了
-    private static func dumpMainMenu() {
+    /// --diag 时打印主菜单 + 菜单栏菜单的结构，便于确认菜单真的建好了、且没有意外置灰
+    private func dumpMenus() {
         guard let main = NSApp.mainMenu else { print("diag: mainMenu = nil"); return }
         for item in main.items {
-            let names = item.submenu?.items.map { $0.title.isEmpty ? "—" : $0.title } ?? []
+            guard let sub = item.submenu else { continue }
+            sub.update()
+            let names = sub.items.map { child -> String in
+                if child.isSeparatorItem { return "—" }
+                // (禁用) 多半是 target 没实现对：标准编辑命令在搜索框失焦时置灰是正常的
+                return child.isEnabled ? child.title : "\(child.title)(禁用)"
+            }
             print("diag: menu [\(item.title)] : \(names.joined(separator: " | "))")
         }
+        print("diag: statusItemVisible = \(statusBar.isVisible)")
+        statusBar.dumpMenu()
     }
 
-    /// 菜单项工厂：自定义 action 一律把 target 指向 AppDelegate，不依赖 responder chain
+    /// 菜单项工厂。
+    /// ownedBySelf = false（默认）时**不设 target**，交给响应链：标准编辑命令落到输入框、
+    /// NSApp 的命令落到 NSApplication。之前一律 target = self，导致「关于 / 隐藏 / 退出」
+    /// 这些 NSApplication 的方法因为 AppDelegate 没实现而被置灰点不动。
     private func actionItem(_ title: String,
                             _ action: Selector?,
                             _ key: String = "",
-                            _ mask: NSEvent.ModifierFlags = []) -> NSMenuItem {
+                            _ mask: NSEvent.ModifierFlags = [],
+                            ownedBySelf: Bool = false) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-        item.target = self
+        if ownedBySelf { item.target = self }
         if !key.isEmpty { item.keyEquivalentModifierMask = mask }
         return item
     }
@@ -146,5 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func rescanApps(_ sender: Any?) {
         controller.rescan()
+    }
+
+    /// 主菜单「窗口 → 菜单栏图标」：关掉之后靠这里开回来
+    @objc private func toggleMenuBarIcon(_ sender: Any?) {
+        statusBar.setVisible(!statusBar.isVisible)
+        menuBarIconItem?.state = statusBar.isVisible ? .on : .off
     }
 }
