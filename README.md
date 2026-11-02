@@ -136,9 +136,10 @@ open /Applications/LaunchPad.app     # 打开即展开启动台
 
 | 来源 | 路径 |
 |---|---|
-| 交付版（唯一应该保留的） | `dist/LaunchPad.app` |
+| 正式安装版（唯一应该保留的） | `/Applications/LaunchPad.app` |
 | 脚本构建产物 | `.build/Build/Products/Release/LaunchPad.app` |
 | **Xcode GUI 构建产物** | `~/Library/Developer/Xcode/DerivedData/LaunchPadReplica-*/Build/Products/Release/LaunchPad.app` |
+| **废纸篓里的旧副本** | `~/.Trash/LaunchPad*.app` |
 
 `xcodebuild` 每次编译都会把自己的产物注册进 LaunchServices；`.metadata_never_index` 只能阻止
 Spotlight 索引文件内容，**挡不住 LS 注册**。
@@ -150,8 +151,13 @@ Spotlight 索引文件内容，**挡不住 LS 注册**。
 
 ```bash
 LSR=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-"$LSR" -dump | awk '/^path: /{p=$0} /^identifier: +com\.story5\.launchpad$/{print p}'
+"$LSR" -dump | grep -B14 "com.story5.launchpad" | grep "^path:"
 ```
+
+**废纸篓里的旧 `.app` 同样会被注册**，而且命令行删不掉（受「完全磁盘访问」权限保护，
+`rm ~/.Trash/...` 会报 `Operation not permitted`）。需要在 Finder 里打开废纸篓 →
+右键「清倒废纸篓」（或 `⌘⇧⌫`）彻底删掉它们，这一条不处理的话，
+注销完几秒后系统又会把废纸篓里的副本注册回来。
 
 > **坑**：只 `lsregister -u` 是不够的。只要那份 `LaunchPad.app` 还在磁盘上、且在 Spotlight 索引范围内，
 > 几秒后系统会把它重新注册回来（实测 6 秒内回弹）。必须让文件不再是 `.app`，比如改名成
