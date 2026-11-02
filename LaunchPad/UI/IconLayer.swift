@@ -267,6 +267,9 @@ final class IconLayer: CALayer {
         opacity = 1
         transform = CATransform3DIdentity
         isPressed = false
+        // 同上：高亮也是瞬时状态。图层池化复用时若不清，
+        // 上一个条目残留的白框会跟着图层跑到下一个条目身上。
+        highlightLayer.opacity = 0
         // 必须把抖动标记一起清掉：图层是池化复用的，这里 removeAllAnimations()
         // 已经把 jiggle 动画摘了，若 isJiggling 还留着 true，复用时 startJiggle()
         // 会被自己的 guard 挡住，抖动就再也加不回来（表现：翻页后图标不抖了）。

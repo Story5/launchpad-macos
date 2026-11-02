@@ -623,7 +623,12 @@ final class GridCanvasView: NSView {
         for layer in iconLayers.values {
             layer.stopJiggle()
             layer.setDeleteBadgeVisible(false, animated: true)
+            // 拖拽落点留下的高亮框：点空白退出编辑时一并清掉。
+            // 之前这里只收抖动和 ⊗，所以那个白框会一直挂在图标后面。
+            layer.setHighlighted(false)
         }
+        hoverItem = nil
+        folderCandidate = nil
     }
 
     /// 把所有在屏图层切成「抖动 + 可删的显示 ⊗」
@@ -865,6 +870,15 @@ final class GridCanvasView: NSView {
         autoPageSide = 0
         isDragging = false
 
+        // 先记下落点候选，再关高亮：clearHover() 会把 folderCandidate 一并清掉，
+        // 顺序反了的话松手就永远走不到合并分支（拖到文件夹上也不会合并）。
+        let mergeTarget = folderCandidate
+        // 高亮必须在这里关掉，不能只把 hoverItem 置 nil：
+        // 下面不管是合并成文件夹还是重排，hoverItem 指向的条目都会和它的图层脱钩
+        // （图层是池化复用的，会被回收或改绑到别的条目），之后再想关就找不到那个图层了，
+        // 表现就是「拖进文件夹后，文件夹后面那个白框一直不消失」。
+        clearHover()
+
         let destination: (page: Int, slot: Int)
         if let hit = slotAt(point: point), hit.page < displayPages.count {
             destination = (hit.page, insertionIndex(page: hit.page, slot: hit.slot))
@@ -872,7 +886,7 @@ final class GridCanvasView: NSView {
             destination = (currentPage, displayPages[currentPage].count)
         }
 
-        if let candidate = folderCandidate, !item.isFolder {
+        if let candidate = mergeTarget, !item.isFolder {
             // 合并为文件夹 / 投入已有文件夹（LaunchPad 不支持文件夹嵌套）
             if candidate.isFolder {
                 library?.removeFromPages(item)
