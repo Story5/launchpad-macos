@@ -143,7 +143,9 @@ killall Finder Dock
 ## 构建与运行
 
 ```bash
-# 方式一：一键脚本（产物 dist/LaunchPad.app）
+# 方式一：一键脚本
+#   本机已装过 /Applications/LaunchPad.app → 直接原地更新它（dist 里不放 .app 副本）
+#   没装过                                → 产物在 dist/LaunchPad.app
 ./scripts/build.sh Release
 
 # 打发布包（只发 dmg）
@@ -155,15 +157,23 @@ xcodegen generate          # 工程由 project.yml 生成
 open LaunchPadReplica.xcodeproj    # ⌘R 运行
 ```
 
+> 替换 `/Applications` 里的旧版用的是 `rsync` **原地同步**，不是 `rm -rf` + `cp`。
+> 因为 macOS 27 会把「删除一个 `.app` bundle」重定向进废纸篓，每次构建都多一个
+> `LaunchPad 17-02-33-518.app`，它们还会被 LaunchServices 注册回聚焦 —— 这正是
+> 「聚焦里搜出多个 LaunchPad」的主要来源，而废纸篓受 TCC 保护、命令行删不掉。
+
 > 用 Xcode GUI 编译后，系统 DerivedData 里会多一份被注册的 `LaunchPad.app`，聚焦里就会搜出两个。
 > 跑一次 `./scripts/build.sh Release` 会把重复注册清掉（原理见下文「Spotlight 里搜出多个 LaunchPad？」）。
 
 安装与启动：
 
 ```bash
+# 本机没装过时才会在 dist 里生成 .app 副本
 cp -R dist/LaunchPad.app /Applications/
 open /Applications/LaunchPad.app     # 打开即展开启动台
 ```
+
+以后升级不用再手工拷：`./scripts/build.sh Release` 会直接原地更新 `/Applications/LaunchPad.app`。
 
 启动后在 **Dock 中常驻显示图标**，随时可再次点开；收起后点 Dock 图标或按 `F4` 都能重新展开。
 
@@ -185,20 +195,20 @@ open /Applications/LaunchPad.app     # 打开即展开启动台
 `xcodebuild` 每次编译都会把自己的产物注册进 LaunchServices；`.metadata_never_index` 只能阻止
 Spotlight 索引文件内容，**挡不住 LS 注册**。
 
-`scripts/build.sh` 已经处理了：构建完成后扫一遍 LS 数据库，把除 `dist/LaunchPad.app` 之外的
-同 bundle id 注册全部 `lsregister -u` 注销，最后打印当前注册数（应为 1）。
+`scripts/build.sh` 已经处理了：构建完成后扫一遍 LS 数据库，把除安装版（`/Applications/LaunchPad.app`，
+没装过时是 `dist/LaunchPad.app`）之外的同 bundle id 注册全部 `lsregister -u` 注销，最后打印当前注册数（应为 1）。
 
-如果历史残留还在，先看还剩几条：
+**废纸篓里的副本从哪来**：老版本的 `build.sh` 用 `rm -rf /Applications/LaunchPad.app` + `cp -R` 替换安装版，
+而 macOS 27 会把「删除 `.app` bundle」这个动作**重定向进废纸篓**，于是每构建一次就在废纸篓里多一个
+`LaunchPad 17-02-33-518.app`（带时间戳的名字是系统起的）。现在改成 `rsync -a --delete` 原地同步，
+bundle 本身不动，不会再产生新副本 —— 但**历史上攒下的那些还在**。
 
-```bash
-LSR=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-"$LSR" -dump | grep -B14 "com.story5.launchpad" | grep "^path:"
-```
+这些副本命令行删不掉（受「完全磁盘访问」保护，`rm ~/.Trash/...` 报 `Operation not permitted`，
+连 `ls ~/.Trash` 都会被拒），必须人工清一次：
 
-**废纸篓里的旧 `.app` 同样会被注册**，而且命令行删不掉（受「完全磁盘访问」权限保护，
-`rm ~/.Trash/...` 会报 `Operation not permitted`）。需要在 Finder 里打开废纸篓 →
-右键「清倒废纸篓」（或 `⌘⇧⌫`）彻底删掉它们，这一条不处理的话，
-注销完几秒后系统又会把废纸篓里的副本注册回来。
+> 打开废纸篓 → 右键「清倒废纸篓」（或 `⌘⇧⌫`）。
+
+不清的话，注销完几秒系统又会把它们注册回来，聚焦里就一直是多个。
 
 > **坑**：只 `lsregister -u` 是不够的。只要那份 `LaunchPad.app` 还在磁盘上、且在 Spotlight 索引范围内，
 > 几秒后系统会把它重新注册回来（实测 6 秒内回弹）。必须让文件不再是 `.app`，比如改名成
