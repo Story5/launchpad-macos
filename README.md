@@ -25,7 +25,39 @@ macOS 27 移除了 Launchpad，这是一个用 **Swift + AppKit + Core Animation
 
 **安装方式**：打开 `.dmg`，把 `LaunchPad.app` 拖到窗口里的 `Applications` 替身上即可。
 
-当前是 **ad-hoc 签名、未做 Apple 公证**，首次打开若被 Gatekeeper 拦截，用「右键 → 打开」放行（公证需要 Apple 开发者账号）。
+当前是 **ad-hoc 签名、未做 Apple 公证**，首次打开若被 Gatekeeper 拦截，用「右键 → 打开」放行。想彻底消除这个提示见下节。
+
+### Gatekeeper 提示「无法验证…是否包含恶意软件」？
+
+默认产物是 **ad-hoc 签名**（`codesign -dv` 里能看到 `Signature=adhoc`、`TeamIdentifier=not set`）。苹果无法验证这种签名，所以下载后打开 dmg **一定**会弹这条警告——这是规则问题，不是包打得不对。
+
+**不想折腾（免费）**，二选一：
+
+- 打开 dmg 时用「右键 → 打开」放行一次；
+- 或先摘掉文件的隔离属性（Gatekeeper 只检查带 `com.apple.quarantine` 的文件）：
+
+```bash
+xattr -d com.apple.quarantine ~/Downloads/LaunchPad-*.dmg   # 打开 dmg 之前跑
+xattr -cr /Applications/LaunchPad.app                        # 装好之后再跑一次
+```
+
+**彻底消除（需要 Apple 开发者账号）**：Developer ID 签名 + 苹果公证 + 装订票据，之后谁下载都不会再有提示：
+
+```bash
+# 1) 一次性准备
+#    a. 申请「Developer ID Application」证书并装进登录钥匙串
+#       https://developer.apple.com/account/resources/certificates/add
+#       （Xcode 不会自动建这个证书，必须手动申请；CSR 用「钥匙串访问 → 证书助理」生成即可）
+#    b. 存一次公证凭据（Apple ID + app 专用密码，或 App Store Connect API key）
+./scripts/notary_setup.sh --apple-id you@example.com --team-id XXXXXXXXXX
+
+# 2) 构建 → Developer ID 签名 → 打 dmg → 公证 → 装订，一步到位
+./scripts/build.sh Release --notarize
+```
+
+> 公证检查的是包内**每一个**可执行，所以 dmg 里的 `.app` 必须先换成 Developer ID + Hardened Runtime 签名，
+> ad-hoc 签名会被直接拒。`build.sh --notarize` 已经把顺序排好了（先签 `.build` 里的产物，再拷贝、再打包）。
+> 凭据写在 `scripts/notary.conf`，该文件已加入 `.gitignore`。
 
 ## 功能
 
@@ -210,8 +242,12 @@ LaunchPad/
 └── Resources/AppIcon.icns         应用图标（由 scripts/make_icon.py 生成）
 
 scripts/
-├── build.sh                       一键构建（图标缺失时自动生成，--dmg 顺带打 dmg 包）
+├── build.sh                       一键构建（图标缺失时自动生成；--dmg 打 dmg；--notarize 签名+公证）
 ├── make_dmg.sh                    把构建产物打成 dmg（含 /Applications 替身）
+├── sign_release.sh                Developer ID + Hardened Runtime 重签（公证前置）
+├── notarize.sh                    提交苹果公证 + staple 票据 + spctl 校验
+├── notary_setup.sh                一次性存公证凭据（钥匙串 profile 或 API key）
+├── entitlements.plist             发布用 entitlements（不含调试用的 get-task-allow）
 └── make_icon.py                   程序化生成 AppIcon.icns
 ```
 

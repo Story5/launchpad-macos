@@ -1,7 +1,9 @@
 #!/bin/bash
 # 一键构建 LaunchPad.app（产物输出到 dist/LaunchPad.app）
-# 用法：./scripts/build.sh [Debug|Release] [--dmg]
-#   --dmg  顺带打发布包 dist/LaunchPad-<版本>-arm64.dmg（现在只发 dmg，不再出 zip）
+# 用法：./scripts/build.sh [Debug|Release] [--dmg] [--notarize]
+#   --dmg        顺带打发布包 dist/LaunchPad-<版本>-arm64.dmg（现在只发 dmg，不再出 zip）
+#   --notarize   额外用 Developer ID 签名并提交苹果公证后装订票据（别人下载不再报警告）
+#                需要先跑一次 ./scripts/notary_setup.sh 存好凭据
 
 set -euo pipefail
 
@@ -11,7 +13,13 @@ cd "$ROOT"
 CONFIG="${1:-Release}"
 DD="$ROOT/.build"
 MAKE_DMG=0
-for arg in "${@:2}"; do [ "$arg" = "--dmg" ] && MAKE_DMG=1; done
+NOTARIZE=0
+for arg in "${@:2}"; do
+  case "$arg" in
+    --dmg) MAKE_DMG=1 ;;
+    --notarize) MAKE_DMG=1; NOTARIZE=1 ;;
+  esac
+done
 
 # 应用图标：缺失时自动生成（也可手动 `python3 scripts/make_icon.py` 重建）
 if [ ! -f "$ROOT/LaunchPad/Resources/AppIcon.icns" ]; then
@@ -44,6 +52,15 @@ xcodebuild \
   build
 
 APP="$DD/Build/Products/$CONFIG/LaunchPad.app"
+
+# 要公证的话，产物必须在「拷贝出去」之前就用 Developer ID 重签：
+# 公证检查的是 dmg 里那份，而 dmg 是从 .build 打的；但同时本机 /Applications 那份
+# 也会跟着一起拷贝，先签再拷能保证两边都是同一份有效签名。
+if [ "$NOTARIZE" = "1" ]; then
+  echo "==> 用 Developer ID 重新签名"
+  "$ROOT/scripts/sign_release.sh" "$APP"
+fi
+
 mkdir -p "$ROOT/dist"
 # 同样阻止 Spotlight 索引 dist：只靠 lsregister -u 注销会被系统重新注册回来，
 # 必须让 mds 不再扫这个目录（/Applications 那份是正式安装版，不受影响）。
@@ -113,7 +130,10 @@ fi
 # 该目录早就被 Spotlight 索引过，单纯注销几秒后系统又会把它注册回来
 # （.metadata_never_index 只对「从没被索引过」的目录有效）。所以直接移除文件，
 # 只在 dist 保留发布用的 zip。没装到 /Applications 时才保留 dist/LaunchPad.app 作为运行版。
-if [ "$MAKE_DMG" = "1" ]; then
+if [ "$NOTARIZE" = "1" ]; then
+  # 打 dmg + 签名 + 公证 + 装订票据（内部会调 make_dmg.sh，不再重复打一次）
+  "$ROOT/scripts/notarize.sh"
+elif [ "$MAKE_DMG" = "1" ]; then
   # 打 dmg（脚本自己从 .build 取产物，不依赖 dist/LaunchPad.app）
   "$ROOT/scripts/make_dmg.sh"
 fi

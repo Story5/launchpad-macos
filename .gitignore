@@ -16,3 +16,6 @@ dist/
 
 # 本地工具状态（含本机绝对路径）
 .workbuddy/
+
+# 公证凭据（本地私密配置，不入库）
+scripts/notary.conf
